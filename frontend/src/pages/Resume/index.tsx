@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { Briefcase, Download, RotateCcw } from 'lucide-react'
-import type { ResumeData, ResumeTemplateId } from '@/types'
+import type { ResumeData, ResumeTemplateId, SavedResume, TailorResult } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button, buttonVariants } from '@/components/ui/Button'
 import { PixelBar } from '@/components/pixel/PixelBar'
@@ -15,10 +15,13 @@ import { ScaledResume } from '@/components/resume/ScaledResume'
 import { ResumeLibrary } from '@/components/resume/ResumeLibrary'
 import { TemplateGallery } from '@/components/resume/TemplateGallery'
 import { XpPurchaseButton } from '@/components/economy/XpPurchaseButton'
-import { getTemplate, resumeTemplates } from '@/mock/resumeTemplates'
+import { templateName, useResumeTemplates } from '@/components/resume/templates'
 import { cn } from '@/utils/cn'
-import { RESUME_AI_COST, tailorToJob, type TailorResult } from '@/services/resumeAi'
-import { RESUME_SLOT_COST, selectActive, useResumeStore } from '@/stores/resumeStore'
+import { RESUME_AI_COST } from '@/services/resumeAi'
+import { api } from '@/services/api'
+import { PageLoader } from '@/components/layout/PageLoader'
+import { RESUME_SLOT_COST, selectActive, useResumeLibrary, useResumeStore } from '@/stores/resumeStore'
+import { useWalletStore } from '@/stores/walletStore'
 
 const priceList = [
   { label: 'Summary', cost: RESUME_AI_COST.summary },
@@ -27,7 +30,6 @@ const priceList = [
   { label: 'Tailor to job', cost: RESUME_AI_COST.tailor },
 ]
 
-const premiumCosts = resumeTemplates.filter((t) => t.cost > 0).map((t) => t.cost)
 
 const TABS = [
   { id: 'content', label: 'Content', sprite: 'scroll' },
@@ -51,8 +53,10 @@ function TailorPanel({ data, update }: { data: ResumeData; update: ResumeUpdate 
           label="Tailor resume"
           cost={RESUME_AI_COST.tailor}
           disabled={job.trim().length < 30}
-          onRun={() => {
-            setResult(tailorToJob(data, job))
+          onRun={async () => {
+            const { result: tailored, balance } = await api.tailorResume(data, { jobDescription: job })
+            useWalletStore.getState().setBalance(balance)
+            setResult(tailored)
             setApplied(false)
           }}
         />
@@ -137,23 +141,31 @@ function TailorPanel({ data, update }: { data: ResumeData; update: ResumeUpdate 
 }
 
 export default function ResumeBuilder() {
-  const active = useResumeStore(selectActive)
-  const data = active.data
+  const loaded = useResumeLibrary()
+  const templates = useResumeTemplates()
+  const premiumCosts = templates.filter((t) => t.cost > 0).map((t) => t.cost)
+  const active = useResumeStore(selectActive) as SavedResume | undefined
   const update = useResumeStore((s) => s.update)
   const reset = useResumeStore((s) => s.reset)
   const unlockTemplate = useResumeStore((s) => s.unlockTemplate)
   const setTemplate = useResumeStore((s) => s.setTemplate)
+  const saving = useResumeStore((s) => s.saving)
+  const saveError = useResumeStore((s) => s.saveError)
   const [confirmReset, setConfirmReset] = useState(false)
   const [tab, setTab] = useState<Tab>('content')
   const [previewTemplate, setPreviewTemplate] = useState<ResumeTemplateId | null>(null)
-  const shownTemplate = previewTemplate ?? active.templateId
-  const previewing = previewTemplate && previewTemplate !== active.templateId ? getTemplate(previewTemplate) : null
 
   useEffect(() => {
     if (!confirmReset) return
     const id = window.setTimeout(() => setConfirmReset(false), 3000)
     return () => window.clearTimeout(id)
   }, [confirmReset])
+
+  if (!loaded || !active) return <PageLoader />
+
+  const data = active.data
+  const shownTemplate = previewTemplate ?? active.templateId
+  const previewing = previewTemplate && previewTemplate !== active.templateId ? templates.find((t) => t.id === previewTemplate) : null
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
@@ -166,13 +178,16 @@ export default function ResumeBuilder() {
           <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Write it yourself for free — let Quest AI polish it for XP.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <span role="status" className={cn('font-pixel text-xs', saveError ? 'text-[var(--color-error)]' : 'text-[var(--color-text-muted)]')} title={saveError ?? undefined}>
+            {saveError ? 'Not saved' : saving ? 'Saving…' : 'All changes saved'}
+          </span>
           <XpBalance className="px-2 py-1.5 text-sm" />
           <Button
             variant={confirmReset ? 'danger' : 'ghost'}
             size="sm"
             onClick={() => {
               if (!confirmReset) return setConfirmReset(true)
-              reset()
+              void reset()
               setConfirmReset(false)
             }}
           >
@@ -199,13 +214,15 @@ export default function ResumeBuilder() {
         <span className="border-2 border-[var(--color-border-strong)] px-2 py-0.5 font-pixel text-xs text-[var(--color-text-secondary)]">
           Extra resume slot <span className="text-[var(--color-accent)]">{RESUME_SLOT_COST} XP</span>
         </span>
-        <span className="border-2 border-[var(--color-border-strong)] px-2 py-0.5 font-pixel text-xs text-[var(--color-text-secondary)]">
-          Premium template{' '}
-          <span className="text-[var(--color-accent)]">
-            {Math.min(...premiumCosts)}–{Math.max(...premiumCosts)} XP
+        {premiumCosts.length > 0 && (
+          <span className="border-2 border-[var(--color-border-strong)] px-2 py-0.5 font-pixel text-xs text-[var(--color-text-secondary)]">
+            Premium template{' '}
+            <span className="text-[var(--color-accent)]">
+              {Math.min(...premiumCosts)}–{Math.max(...premiumCosts)} XP
+            </span>
           </span>
-        </span>
-        <span className="ml-auto text-xs text-[var(--color-text-muted)]">Editing, 2 templates and PDF download are always free.</span>
+        )}
+        <span className="ml-auto text-xs text-[var(--color-text-muted)]">Editing, the free templates and PDF download cost nothing.</span>
       </div>
 
       <ResumeLibrary />
@@ -252,8 +269,8 @@ export default function ResumeBuilder() {
               <XpPurchaseButton
                 size="sm"
                 cost={previewing.cost}
-                onPurchase={() => {
-                  const ok = unlockTemplate(previewing.id)
+                onPurchase={async () => {
+                  const ok = await unlockTemplate(previewing.id)
                   if (ok) {
                     setTemplate(previewing.id)
                     setPreviewTemplate(null)
@@ -270,7 +287,7 @@ export default function ResumeBuilder() {
           )}
           <p className="mb-2 flex flex-wrap items-center justify-between gap-2 font-pixel text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
             <span>
-              {active.title} · {getTemplate(shownTemplate).name}
+              {active.title} · {templateName(templates, shownTemplate)}
             </span>
             <span className="normal-case tracking-normal">
               <mark className="bg-[#fff3c4] px-1 text-[#7a5200]">[highlighted]</mark> = fill in before sending

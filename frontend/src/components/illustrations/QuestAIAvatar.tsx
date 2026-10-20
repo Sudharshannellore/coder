@@ -7,7 +7,7 @@ interface QuestAIAvatarProps {
   className?: string
 }
 
-/** CodeQuest's mascot: Quest AI as a pixel bot, used anywhere the mentor speaks. */
+/** Logicraft's mascot: Quest AI as a pixel bot, used anywhere the mentor speaks. */
 export function QuestAIAvatar({ size = 32, animated = false, className }: QuestAIAvatarProps) {
   return (
     <PixelSprite

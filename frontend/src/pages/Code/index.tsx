@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ArrowLeft, Play, Send, Swords, X } from 'lucide-react'
 import { api } from '@/services/api'
+import { errorMessage } from '@/services/api/client'
 import type { AIMessage, Language, SubmissionResult } from '@/types'
 import { ProblemPanel } from '@/components/coding/ProblemPanel'
 import { CodeEditor } from '@/components/coding/CodeEditor'
 import { CodeConsole, type ConsoleTab } from '@/components/coding/CodeConsole'
 import { ResizeHandle } from '@/components/coding/ResizeHandle'
 import { AICoach } from '@/components/ai/AICoach'
-import { mentorReply, suggestedQuestions, type MentorContext } from '@/services/questAi'
 import { PageLoader } from '@/components/layout/PageLoader'
 import { Badge, difficultyVariant } from '@/components/ui/Badge'
 import { Button, buttonVariants } from '@/components/ui/Button'
@@ -19,8 +19,7 @@ import { QuestAIAvatar } from '@/components/illustrations/QuestAIAvatar'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { PixelBackdrop } from '@/components/pixel/PixelBackdrop'
 import { useWalletStore } from '@/stores/walletStore'
-import { DUEL_WIN_BONUS, formatDuration, useSocialStore, type Duel } from '@/stores/socialStore'
-import { findPlayer } from '@/mock/players'
+import { DUEL_WIN_BONUS, formatDuration, useFindPlayer, useSocialStore, type Duel } from '@/stores/socialStore'
 import { cn } from '@/utils/cn'
 
 export default function CodeWorkspace() {
@@ -42,10 +41,17 @@ export default function CodeWorkspace() {
   const [needsHelp, setNeedsHelp] = useState(false)
   const [victoryOpen, setVictoryOpen] = useState(false)
   const [awardedXp, setAwardedXp] = useState(0)
-  const rewardOnce = useWalletStore((s) => s.rewardOnce)
+  const setBalance = useWalletStore((s) => s.setBalance)
+  const queryClient = useQueryClient()
   const [shaking, setShaking] = useState(false)
   const [leftWidth, setLeftWidth] = useState(40)
   const [editorHeight, setEditorHeight] = useState(60)
+  // When this board was opened — the solve time recorded on the profile.
+  const [openedAt] = useState(() => Date.now())
+  const { data: suggestions = [] } = useQuery({
+    queryKey: ['mentor-suggestions', 'problem', slug],
+    queryFn: () => api.getMentorSuggestions({ kind: 'problem', ref: slug }),
+  })
 
   const bodyRef = useRef<HTMLDivElement>(null)
   const rightRef = useRef<HTMLDivElement>(null)
@@ -54,16 +60,25 @@ export default function CodeWorkspace() {
   const [searchParams] = useSearchParams()
   const duelId = searchParams.get('duel')
   const duel = useSocialStore((s) => (duelId ? s.duels.find((d) => d.id === duelId) : undefined))
+  const socialLoaded = useSocialStore((s) => s.loaded)
+  const refreshSocial = useSocialStore((s) => s.refresh)
   const startDuel = useSocialStore((s) => s.startDuel)
-  const finishDuel = useSocialStore((s) => s.finishDuel)
+  const forfeitDuel = useSocialStore((s) => s.forfeitDuel)
+  const upsertDuel = useSocialStore((s) => s.upsertDuel)
+  const findPlayer = useFindPlayer()
   const [duelResult, setDuelResult] = useState<Duel | undefined>()
   const [now, setNow] = useState(() => Date.now())
-  const duelLive = !!duel && duel.status === 'active' && duel.problemSlug === slug
-  const rival = duel ? findPlayer(duel.friendId) : undefined
+  const duelLive = !!duel && duel.status === 'active' && duel.problemSlug === slug && duel.mySeconds === undefined
+  const rival = duel ? (duel.friend ?? findPlayer(duel.friendId)) : undefined
   const remaining = duel ? duel.timeLimitMinutes * 60 - (duel.startedAt ? Math.max(0, Math.floor((now - duel.startedAt) / 1000)) : 0) : 0
 
+  // Opened straight from a link: load the duel.
   useEffect(() => {
-    if (duelLive && !duel.startedAt) startDuel(duel.id)
+    if (duelId && !socialLoaded) void refreshSocial().catch(() => undefined)
+  }, [duelId, socialLoaded, refreshSocial])
+
+  useEffect(() => {
+    if (duelLive && !duel.startedAt) void startDuel(duel.id).catch(() => undefined)
   }, [duelLive, duel, startDuel])
 
   useEffect(() => {
@@ -73,8 +88,12 @@ export default function CodeWorkspace() {
   }, [duelLive])
 
   useEffect(() => {
-    if (duelLive && duel.startedAt && remaining <= 0) setDuelResult(finishDuel(duel.id, null))
-  }, [duelLive, duel, remaining, finishDuel])
+    if (duelLive && duel.startedAt && remaining <= 0) {
+      void forfeitDuel(duel.id)
+        .then(setDuelResult)
+        .catch(() => undefined)
+    }
+  }, [duelLive, duel, remaining, forfeitDuel])
 
   useEffect(() => {
     if (problem) setCode(problem.starterCode[language])
@@ -121,13 +140,28 @@ export default function CodeWorkspace() {
     setIsRunning(true)
     setSubmitted(submit)
     setConsoleTab('results')
-    const response = await api.runCode(problem.slug)
+    let response: SubmissionResult
+    try {
+      response = submit
+        ? await api.submitCode(problem.slug, {
+            language,
+            code,
+            elapsedSeconds: Math.round((Date.now() - openedAt) / 1000),
+            duelId: duelLive ? duel.id : undefined,
+          })
+        : await api.runCode(problem.slug, language, code)
+    } catch (e) {
+      response = { status: 'error', testResults: [], error: errorMessage(e) }
+    }
     setResult(response)
     setIsRunning(false)
-    if (submit) setConsoleTab('review')
+    setBalance(response.balance)
+    if (submit && response.status !== 'error') setConsoleTab('review')
     if (submit && response.status === 'passed') {
-      setAwardedXp(rewardOnce(`code:${problem.slug}`, problem.xp))
-      if (duelLive && duel.startedAt) setDuelResult(finishDuel(duel.id, Math.round((Date.now() - duel.startedAt) / 1000)))
+      setAwardedXp(response.awardedXp ?? 0)
+      if (response.duel) setDuelResult(upsertDuel(response.duel))
+      void queryClient.invalidateQueries({ queryKey: ['problems'] })
+      void queryClient.invalidateQueries({ queryKey: ['daily-quest'] })
       setVictoryOpen(true)
     }
     if (response.status === 'failed') {
@@ -144,23 +178,18 @@ export default function CodeWorkspace() {
     setConsoleTab('testcases')
   }
 
-  const mentorContext: MentorContext = {
-    kind: 'problem',
-    title: problem.title,
-    description: problem.description,
-    tags: problem.tags,
-    hints: problem.hints,
-    examples: problem.examples,
-  }
-
-  const handleAsk = (question: string) => {
-    const now = new Date().toISOString()
+  const handleAsk = async (question: string) => {
     const turn = messages.filter((m) => m.role === 'user').length
-    setMessages((prev) => [
-      ...prev,
-      { id: `u-${Date.now()}`, role: 'user', text: question, timestamp: now },
-      { id: `a-${Date.now()}`, role: 'ai', text: mentorReply(question, mentorContext, turn), timestamp: now },
-    ])
+    const pendingId = `u-${Date.now()}`
+    setMessages((prev) => [...prev, { id: pendingId, role: 'user', text: question, timestamp: new Date().toISOString() }])
+    try {
+      const reply = await api.askMentor({ kind: 'problem', problemSlug: problem.slug }, question, turn)
+      setBalance(reply.balance)
+      setMessages((prev) => [...prev, reply.answer])
+    } catch (e) {
+      setMessages((prev) => prev.filter((m) => m.id !== pendingId))
+      throw e
+    }
   }
 
   const openAi = () => {
@@ -314,7 +343,7 @@ export default function CodeWorkspace() {
                     >
                       <X className="h-4 w-4" />
                     </button>
-                    <AICoach messages={messages} onAsk={handleAsk} suggestions={suggestedQuestions(mentorContext)} className="h-full border-0 shadow-none" />
+                    <AICoach messages={messages} onAsk={handleAsk} suggestions={suggestions} className="h-full border-0 shadow-none" />
                   </motion.aside>
                 </>
               )}
@@ -347,6 +376,15 @@ export default function CodeWorkspace() {
 function DuelOutcome({ duel, rivalName }: { duel: Duel; rivalName: string }) {
   const first = rivalName.split(' ')[0]
   const mine = duel.mySeconds == null ? 'out of time' : formatDuration(duel.mySeconds)
+  if (duel.status === 'active') {
+    // My time is in; a real opponent is still solving — the result arrives on the Challenges page.
+    return (
+      <div className="border-2 border-[var(--color-border-strong)] bg-[var(--color-bg)] px-3 py-2 text-left">
+        <p className="font-pixel text-sm text-[var(--color-violet)]">Your time is in: {mine}</p>
+        <p className="mt-0.5 text-xs text-[var(--color-text-secondary)]">Waiting for {first} to finish — check the Challenges page for the result.</p>
+      </div>
+    )
+  }
   const theirs = duel.friendSeconds === null ? "didn't finish" : formatDuration(duel.friendSeconds)
   const tone = duel.status === 'won' ? 'text-[var(--color-success)]' : duel.status === 'draw' ? 'text-[var(--color-warning)]' : 'text-[var(--color-error)]'
   const headline = duel.status === 'won' ? `You beat ${first}!` : duel.status === 'draw' ? `Draw with ${first}` : `${first} won this duel`

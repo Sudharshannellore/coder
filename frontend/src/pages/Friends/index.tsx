@@ -5,8 +5,10 @@ import { Avatar } from '@/components/ui/Avatar'
 import { Button, buttonVariants } from '@/components/ui/Button'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import type { SpriteName } from '@/components/pixel/sprites'
-import { findPlayer, players, UUID_PATTERN, type Player } from '@/mock/players'
-import { useSocialStore, useSocialSync, type AddFriendResult, type Duel } from '@/stores/socialStore'
+import type { Player } from '@/types'
+import { PageLoader } from '@/components/layout/PageLoader'
+import { errorMessage } from '@/services/api/client'
+import { UUID_PATTERN, useFindPlayer, useSocialStore, useSocialSync, type AddFriendResult, type Duel } from '@/stores/socialStore'
 import { cn } from '@/utils/cn'
 
 const RESULT_TEXT: Record<AddFriendResult, { text: string; ok: boolean }> = {
@@ -187,7 +189,8 @@ function FriendsTab({ onAdd, onRequests }: { onAdd: () => void; onRequests: () =
   const friends = useSocialStore((s) => s.friends)
   const duels = useSocialStore((s) => s.duels)
   const incoming = useSocialStore((s) => s.incomingRequests)
-  const friendPlayers = useMemo(() => friends.map(findPlayer).filter((p): p is Player => !!p), [friends])
+  const findPlayer = useFindPlayer()
+  const friendPlayers = useMemo(() => friends.map(findPlayer).filter((p): p is Player => !!p), [friends, findPlayer])
 
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<(typeof STATUS)[number]>('All')
@@ -363,6 +366,7 @@ function RequestsTab({ onAdd }: { onAdd: () => void }) {
   const outgoing = useSocialStore((s) => s.outgoingRequests)
   const acceptRequest = useSocialStore((s) => s.acceptRequest)
   const declineRequest = useSocialStore((s) => s.declineRequest)
+  const findPlayer = useFindPlayer()
 
   if (incoming.length === 0 && outgoing.length === 0) {
     return (
@@ -431,20 +435,36 @@ function AddFriendTab() {
   const myId = useSocialStore((s) => s.myId)
   const friends = useSocialStore((s) => s.friends)
   const sendFriendRequest = useSocialStore((s) => s.sendFriendRequest)
+  const directory = useSocialStore((s) => s.directory)
+  const findPlayer = useFindPlayer()
   const { copied, copy } = useCopy(myId)
   const [value, setValue] = useState('')
   const [result, setResult] = useState<AddFriendResult | null>(null)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const preview = UUID_PATTERN.test(value.trim()) ? findPlayer(value) : undefined
-  const demo = players.filter((p) => !friends.includes(p.id)).slice(0, 4)
+  const suggestions = directory
+    .filter((id) => !friends.includes(id))
+    .map(findPlayer)
+    .filter((p): p is Player => !!p)
+    .slice(0, 4)
 
   useEffect(() => input.current?.focus(), [])
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault()
-    const r = sendFriendRequest(value)
-    setResult(r)
-    if (RESULT_TEXT[r].ok) setValue('')
+    setSending(true)
+    setError(null)
+    try {
+      const r = await sendFriendRequest(value)
+      setResult(r)
+      if (RESULT_TEXT[r].ok) setValue('')
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -485,21 +505,26 @@ function AddFriendTab() {
               <span className="font-pixel text-xs text-[var(--color-accent)]">Player found</span>
             </div>
           )}
-          <Button type="submit" variant="pixel" className="w-full" disabled={!value.trim()}>
-            Send friend request
+          <Button type="submit" variant="pixel" className="w-full" disabled={!value.trim() || sending}>
+            {sending ? 'Sending…' : 'Send friend request'}
           </Button>
         </form>
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-[var(--color-error)]">
+            {error}
+          </p>
+        )}
         {result && (
           <p role="status" className={cn('mt-3 font-pixel text-sm', RESULT_TEXT[result].ok ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]')}>
             {RESULT_TEXT[result].text}
           </p>
         )}
 
-        {demo.length > 0 && (
+        {suggestions.length > 0 && (
           <details className="mt-6 border-t-2 border-[var(--color-border)] pt-4">
-            <summary className="cursor-pointer font-pixel text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]">Demo players to try</summary>
+            <summary className="cursor-pointer font-pixel text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]">Other players on Logicraft</summary>
             <ul className="mt-3 space-y-2">
-              {demo.map((p) => (
+              {suggestions.map((p) => (
                 <li key={p.id} className="flex items-center gap-3 text-xs">
                   <span className="w-28 shrink-0 truncate font-pixel text-[var(--color-text-secondary)]">{p.username}</span>
                   <code className="min-w-0 flex-1 truncate font-mono text-[var(--color-text-muted)]">{p.id}</code>
@@ -565,6 +590,8 @@ export default function Friends() {
   const duels = useSocialStore((s) => s.duels)
   const incoming = useSocialStore((s) => s.incomingRequests)
   const outgoing = useSocialStore((s) => s.outgoingRequests)
+  const loaded = useSocialStore((s) => s.loaded)
+  const findPlayer = useFindPlayer()
   const [params, setParams] = useSearchParams()
   const tab: Tab = TABS.includes(params.get('tab') as Tab) ? (params.get('tab') as Tab) : 'friends'
   const setTab = (t: Tab) => setParams(t === 'friends' ? {} : { tab: t }, { replace: true })
@@ -580,6 +607,8 @@ export default function Friends() {
     { id: 'requests', label: 'Requests', count: pending, alert: incoming.length > 0 },
     { id: 'add', label: 'Add friend' },
   ]
+
+  if (!loaded) return <PageLoader />
 
   return (
     <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">

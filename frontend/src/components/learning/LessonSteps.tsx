@@ -6,6 +6,9 @@ import { Button, buttonVariants } from '@/components/ui/Button'
 import { RichText } from '@/components/ui/RichText'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { HashTableDiagram } from './HashTableDiagram'
+import { api } from '@/services/api'
+import { errorMessage } from '@/services/api/client'
+import { languageMeta } from './languages'
 import { cn } from '@/utils/cn'
 
 export function StepConcept({ lesson }: { lesson: Lesson }) {
@@ -63,16 +66,17 @@ export function StepVisualize() {
   )
 }
 
-export function StepCode({ lesson }: { lesson: Lesson }) {
+export function StepCode({ lesson, language = 'python' }: { lesson: Lesson; language?: string }) {
   const lines = lesson.codeExample.split('\n')
+  const lang = languageMeta(language)
   return (
     <div className="grid gap-8 lg:grid-cols-2 lg:gap-10">
       <div className="self-start overflow-hidden border-2 border-[var(--color-border-strong)]">
         <div className="flex items-center justify-between border-b-2 border-[var(--color-border-strong)] bg-[var(--color-surface-elevated)] px-4 py-2">
-          <span className="font-pixel text-xs text-[var(--color-text-muted)]">example.py</span>
-          <span className="font-pixel text-xs text-[var(--color-accent)]">Python</span>
+          <span className="font-pixel text-xs text-[var(--color-text-muted)]">{`example.${lang.ext}`}</span>
+          <span className="font-pixel text-xs text-[var(--color-accent)]">{lang.label}</span>
         </div>
-        <pre className="pixel-scroll overflow-x-auto bg-[#0d0f14] py-3 font-mono text-[14px] leading-7">
+        <pre className="pixel-scroll overflow-x-auto bg-[#0d0f14] py-3 font-mono [tab-size:4] text-[14px] leading-7">
           {lines.map((line, i) => (
             <div key={i} className="flex">
               <span className="w-12 shrink-0 select-none pr-4 text-right text-[#3a404c]">{i + 1}</span>
@@ -101,20 +105,25 @@ export function StepCode({ lesson }: { lesson: Lesson }) {
   )
 }
 
-type RunState = { status: 'idle' } | { status: 'pass'; output: string } | { status: 'fail'; hint: string }
+type RunState = { status: 'idle' } | { status: 'checking' } | { status: 'pass'; output: string } | { status: 'fail'; hint: string }
 
-export function StepTryIt({ lesson, onPassed }: { lesson: Lesson; onPassed: () => void }) {
+export function StepTryIt({ lesson, language = 'python', onPassed }: { lesson: Lesson; language?: string; onPassed: () => void }) {
   const tryIt = lesson.tryIt!
   const [code, setCode] = useState(tryIt.starterCode)
   const [run, setRun] = useState<RunState>({ status: 'idle' })
 
-  const runCode = () => {
-    const failed = tryIt.checks.find((c) => !new RegExp(c.pattern).test(code))
-    if (failed) {
-      setRun({ status: 'fail', hint: failed.hint })
-    } else {
-      setRun({ status: 'pass', output: tryIt.expectedOutput })
-      onPassed()
+  const runCode = async () => {
+    setRun({ status: 'checking' })
+    try {
+      const result = await api.checkTryIt(lesson.id, code)
+      if (result.passed) {
+        setRun({ status: 'pass', output: result.expectedOutput })
+        onPassed()
+      } else {
+        setRun({ status: 'fail', hint: result.hints[0] ?? 'Not quite — re-read the task and try again.' })
+      }
+    } catch (e) {
+      setRun({ status: 'fail', hint: errorMessage(e) })
     }
   }
 
@@ -135,17 +144,18 @@ export function StepTryIt({ lesson, onPassed }: { lesson: Lesson; onPassed: () =
         'border-2 px-4 py-3 font-mono text-sm',
         run.status === 'pass' && 'border-[var(--color-success)]/40 bg-[var(--color-success)]/10',
         run.status === 'fail' && 'border-[var(--color-error)]/40 bg-[var(--color-error)]/10',
-        run.status === 'idle' && 'border-[var(--color-border-strong)] bg-[var(--color-bg)] text-[var(--color-text-muted)]',
+        (run.status === 'idle' || run.status === 'checking') && 'border-[var(--color-border-strong)] bg-[var(--color-bg)] text-[var(--color-text-muted)]',
       )}
     >
       <p className="mb-2 font-pixel text-xs uppercase tracking-[0.2em] text-[var(--color-text-muted)]">Output</p>
       {run.status === 'idle' && <span>&gt; Run your code to see the result here.</span>}
+      {run.status === 'checking' && <span>&gt; Checking your code…</span>}
       {run.status === 'pass' && (
         <div className="flex items-start gap-3">
           <PixelSprite sprite="star" scale={2} fps={3} className="shrink-0" />
           <div>
             <p className="text-[var(--color-text-primary)]">&gt; {run.output}</p>
-            <p className="mt-1 font-sans text-[var(--color-success)]">Nailed it — the key went in and came right back out.</p>
+            <p className="mt-1 font-sans text-[var(--color-success)]">Nailed it — that's exactly what this task asked for.</p>
           </div>
         </div>
       )}
@@ -167,7 +177,7 @@ export function StepTryIt({ lesson, onPassed }: { lesson: Lesson; onPassed: () =
 
       <div className="self-start overflow-hidden border-2 border-[var(--color-border-strong)]">
         <div className="flex items-center justify-between border-b-2 border-[var(--color-border-strong)] bg-[var(--color-surface-elevated)] px-3 py-1.5">
-          <span className="font-pixel text-xs text-[var(--color-text-muted)]">try_it.py</span>
+          <span className="font-pixel text-xs text-[var(--color-text-muted)]">{`try_it.${languageMeta(language).ext}`}</span>
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
@@ -179,8 +189,8 @@ export function StepTryIt({ lesson, onPassed }: { lesson: Lesson; onPassed: () =
             >
               <RotateCcw className="h-3.5 w-3.5" /> Reset
             </Button>
-            <Button size="sm" onClick={runCode}>
-              <Play className="h-3.5 w-3.5" /> Run
+            <Button size="sm" onClick={runCode} disabled={run.status === 'checking'}>
+              <Play className="h-3.5 w-3.5" /> {run.status === 'checking' ? 'Checking…' : 'Run'}
             </Button>
           </div>
         </div>

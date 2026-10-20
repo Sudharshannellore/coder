@@ -11,9 +11,9 @@ type Dir = 'left' | 'right' | 'up' | 'down'
 interface WorldMapProps {
   zones: PathZone[]
   /** Where an unlocked topic leads (the lesson player). */
-  lessonHref: string
-  /** Where an unlocked boss leads (the boss battle). */
-  bossHref: string
+  lessonHref: (node: PathNode) => string
+  /** Where an unlocked boss leads (its fight). */
+  bossHref: (boss: PathBoss) => string
   className?: string
 }
 
@@ -208,7 +208,7 @@ function BossTile({ boss, href, isFinal }: { boss: PathBoss; href: string; isFin
   return (
     <Link
       to={href}
-      aria-label={`Boss ${boss.name} — ${defeated ? 'defeated, rematch' : 'ready, start the fight'}`}
+      aria-label={`Boss ${boss.name} — ${defeated ? 'defeated' : 'ready, start the fight'}`}
       className="group relative z-10 flex flex-col items-center outline-none focus-visible:[&>div:nth-of-type(1)]:ring-2"
     >
       {tag}
@@ -224,7 +224,7 @@ function zoneStatus(zone: PathZone) {
   return 'locked'
 }
 
-function Zone({ zone, index, prev, isLast, cols, lessonHref, bossHref }: { zone: PathZone; index: number; prev?: PathZone; isLast: boolean; cols: number; lessonHref: string; bossHref: string }) {
+function Zone({ zone, index, prev, isLast, cols, lessonHref, bossHref }: { zone: PathZone; index: number; prev?: PathZone; isLast: boolean; cols: number; lessonHref: (node: PathNode) => string; bossHref: (boss: PathBoss) => string }) {
   const tier = TIERS[zone.difficulty]
   const status = zoneStatus(zone)
   const cleared = zone.nodes.filter((n) => n.state === 'completed').length
@@ -294,7 +294,7 @@ function Zone({ zone, index, prev, isLast, cols, lessonHref, bossHref }: { zone:
             >
               {inDir && <TrailHalf dir={inDir} travelled={stop.open} color={isBoss ? 'var(--color-error)' : 'var(--color-accent)'} />}
               {outDir && <TrailHalf dir={outDir} travelled={stops[i + 1].open} color={stops[i + 1].kind === 'boss' ? 'var(--color-error)' : 'var(--color-accent)'} />}
-              {isBoss ? <BossTile boss={stop.boss} href={bossHref} isFinal={isLast} /> : <StopTile node={stop.node} href={lessonHref} />}
+              {isBoss ? <BossTile boss={stop.boss} href={bossHref(stop.boss)} isFinal={isLast} /> : <StopTile node={stop.node} href={lessonHref(stop.node)} />}
             </div>
           )
         })}

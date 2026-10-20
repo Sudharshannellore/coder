@@ -3,7 +3,9 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Check } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
-import { streakMilestones } from '@/mock/rewards'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/services/api'
+import { errorMessage } from '@/services/api/client'
 import { useWalletStore } from '@/stores/walletStore'
 import { cn } from '@/utils/cn'
 
@@ -15,15 +17,27 @@ const BURST = [
 ]
 
 export function StreakRewards({ streakDays, className }: { streakDays: number; className?: string }) {
-  const claimed = useWalletStore((s) => s.claimedMilestones)
-  const claimMilestone = useWalletStore((s) => s.claimMilestone)
+  const { data: milestones = [] } = useQuery({ queryKey: ['streak-milestones'], queryFn: api.getStreakMilestones })
+  const queryClient = useQueryClient()
+  const setBalance = useWalletStore((s) => s.setBalance)
   const reduceMotion = useReducedMotion()
   const [justClaimed, setJustClaimed] = useState<number | null>(null)
+  const [claiming, setClaiming] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  const claim = (days: number, xp: number) => {
-    if (claimMilestone(days, xp)) {
+  const claim = async (days: number) => {
+    setClaiming(days)
+    setError(null)
+    try {
+      const { balance } = await api.claimStreakMilestone(days)
+      setBalance(balance)
+      queryClient.setQueryData(['streak-milestones'], milestones.map((m) => (m.days === days ? { ...m, claimed: true, claimable: false } : m)))
       setJustClaimed(days)
       window.setTimeout(() => setJustClaimed((d) => (d === days ? null : d)), 900)
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setClaiming(null)
     }
   }
 
@@ -39,10 +53,10 @@ export function StreakRewards({ streakDays, className }: { streakDays: number; c
           You're on a <span className="font-pixel text-[var(--color-warning)]">{streakDays}-day</span> streak. Hit milestones to earn bonus XP.
         </p>
         <ol className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-          {streakMilestones.map((m) => {
-            const isClaimed = claimed.includes(m.days)
+          {milestones.map((m) => {
+            const isClaimed = m.claimed
             const reached = streakDays >= m.days
-            const claimable = reached && !isClaimed
+            const claimable = m.claimable
             return (
               <li
                 key={m.days}
@@ -80,10 +94,11 @@ export function StreakRewards({ streakDays, className }: { streakDays: number; c
                 ) : claimable ? (
                   <button
                     type="button"
-                    onClick={() => claim(m.days, m.xp)}
+                    onClick={() => void claim(m.days)}
+                    disabled={claiming !== null}
                     className="pixel-btn w-full bg-[var(--color-violet)] px-2 py-1 font-pixel text-xs text-[#140b2e]"
                   >
-                    Claim
+                    {claiming === m.days ? 'Claiming…' : 'Claim'}
                   </button>
                 ) : (
                   <span className="font-pixel text-[11px] text-[var(--color-text-muted)]">{m.days - streakDays} days to go</span>
@@ -92,6 +107,11 @@ export function StreakRewards({ streakDays, className }: { streakDays: number; c
             )
           })}
         </ol>
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-[var(--color-error)]">
+            {error}
+          </p>
+        )}
       </CardContent>
     </Card>
   )

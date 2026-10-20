@@ -1,17 +1,44 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { Check } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
-import { buttonVariants } from '@/components/ui/Button'
+import { Button, buttonVariants } from '@/components/ui/Button'
+import { Confetti } from '@/components/ui/Confetti'
 import { PixelBar } from '@/components/pixel/PixelBar'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import type { DailyQuest } from '@/types'
+import { api } from '@/services/api'
+import { errorMessage } from '@/services/api/client'
+import { useWalletStore } from '@/stores/walletStore'
 import { cn } from '@/utils/cn'
 
 export function QuestCard({ quest }: { quest: DailyQuest }) {
   const complete = quest.tasks.every((t) => t.done)
+  const queryClient = useQueryClient()
+  const setBalance = useWalletStore((s) => s.setBalance)
+  const [claiming, setClaiming] = useState(false)
+  const [celebrate, setCelebrate] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const claim = async () => {
+    setClaiming(true)
+    setError(null)
+    try {
+      const result = await api.claimDailyQuest()
+      setBalance(result.balance)
+      queryClient.setQueryData(['daily-quest'], result.quest)
+      setCelebrate(true)
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setClaiming(false)
+    }
+  }
 
   return (
     <Card className="pixel-scanlines relative overflow-hidden border-2 border-[var(--color-accent)]/30">
+      {celebrate && <Confetti fire count={28} />}
       <CardContent>
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -45,14 +72,34 @@ export function QuestCard({ quest }: { quest: DailyQuest }) {
               >
                 {task.done ? <Check className="h-3.5 w-3.5" strokeWidth={4} /> : i + 1}
               </span>
-              <span className={cn(task.done && 'line-through')}>{task.label}</span>
+              <span className={cn('flex-1', task.done && 'line-through')}>{task.label}</span>
+              {task.target > 1 && !task.done && (
+                <span className="font-pixel text-xs text-[var(--color-text-muted)]">
+                  {task.progress}/{task.target}
+                </span>
+              )}
             </li>
           ))}
         </ol>
 
-        <Link to="/practice" className={cn(buttonVariants({ variant: 'pixel', size: 'lg' }), 'mt-6 w-full text-lg')}>
-          {complete ? 'Claim Reward' : 'Continue Quest'}
-        </Link>
+        {quest.claimed ? (
+          <p className="mt-6 flex items-center justify-center gap-2 border-2 border-[var(--color-success)]/40 bg-[var(--color-success)]/10 py-3 font-pixel text-[var(--color-success)]">
+            <Check className="h-4 w-4" strokeWidth={3} /> Reward claimed — come back tomorrow
+          </p>
+        ) : quest.claimable ? (
+          <Button variant="pixel" size="lg" className="mt-6 w-full text-lg" onClick={() => void claim()} disabled={claiming}>
+            {claiming ? 'Claiming…' : `Claim ${quest.rewardXp} XP`}
+          </Button>
+        ) : (
+          <Link to="/practice" className={cn(buttonVariants({ variant: 'pixel', size: 'lg' }), 'mt-6 w-full text-lg')}>
+            Continue Quest
+          </Link>
+        )}
+        {error && (
+          <p role="alert" className="mt-2 text-sm text-[var(--color-error)]">
+            {error}
+          </p>
+        )}
       </CardContent>
     </Card>
   )

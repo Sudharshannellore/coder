@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import type { ResumeData, ResumeEntry, ResumeTemplateId } from '@/types'
-import { currentUser } from '@/mock/user'
-import { getTemplate } from '@/mock/resumeTemplates'
+import { useAuthStore } from '@/stores/authStore'
 import { cn } from '@/utils/cn'
 
 /*
@@ -91,11 +90,11 @@ function Entry({ entry, s }: { entry: ResumeEntry; s: EntryStyle }) {
 function Body({ data, spec }: { data: ResumeData; spec: Spec }) {
   const { Section, entry, text } = spec
   const visible = (entries: ResumeEntry[]) => entries.filter((e) => e.title.trim())
-  const { rank, league, stats } = currentUser
-  const achievements = data.includeCodeQuestStats
+  const user = useAuthStore((s) => s.user)
+  const achievements = data.includeCodeQuestStats && user
     ? [
-        `Ranked #${rank} globally on CodeQuest (${league.label} league) with ${stats.problemsSolved} problems solved at ${stats.accuracy}% accuracy.`,
-        `${stats.challengesWon} competitive coding challenges won; ${stats.longestStreak}-day longest practice streak.`,
+        `Ranked #${user.rank} globally on Logicraft (${user.league.label} league) with ${user.stats.problemsSolved} problems solved at ${user.stats.accuracy}% accuracy.`,
+        `${user.stats.challengesWon} competitive coding challenges won; ${user.stats.longestStreak}-day longest practice streak.`,
       ]
     : []
   const entries = (list: ResumeEntry[]) => visible(list).map((e) => <Entry key={e.id} entry={e} s={entry} />)
@@ -449,7 +448,7 @@ const specs: Record<ResumeTemplateId, Spec> = {
 
 /** A4-proportioned white paper rendered in the chosen template. */
 export function ResumePreview({ data, template = 'classic', className }: { data: ResumeData; template?: ResumeTemplateId; className?: string }) {
-  const spec = specs[getTemplate(template).id]
+  const spec = specs[template] ?? specs.classic
   return (
     <article aria-label="Resume preview" className={cn('resume-paper min-h-[1122px] bg-white text-[#13151a]', spec.root, className)}>
       {spec.header(data, contactOf(data))}

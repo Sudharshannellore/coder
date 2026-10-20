@@ -6,8 +6,10 @@ import { Button } from '@/components/ui/Button'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import type { SpriteName } from '@/components/pixel/sprites'
 import { QuestAIAvatar } from '@/components/illustrations/QuestAIAvatar'
-import { runProblemQuery, runSandboxQuery, type GradeResult, type QueryResult } from '@/services/sqlEngine'
-import type { SqlProblem, SqlTable } from '@/types'
+import { api } from '@/services/api'
+import { errorMessage } from '@/services/api/client'
+import { useWalletStore } from '@/stores/walletStore'
+import type { SqlGrade as GradeResult, SqlProblem, SqlQueryResult as QueryResult, SqlTable } from '@/types'
 import { cn } from '@/utils/cn'
 
 const SANDBOX_QUERY = `SELECT department, AVG(salary) FROM employees GROUP BY department;`
@@ -16,7 +18,8 @@ interface SqlBoardProps {
   tables: SqlTable[]
   /** When set, the board becomes a graded question board. */
   problem?: SqlProblem
-  onSolved?: () => void
+  /** A Submit passed; `awardedXp` is 0 when this question was already solved before. */
+  onSolved?: (awardedXp: number) => void
 }
 
 function StatTile({ sprite, label, value, color }: { sprite: SpriteName; label: string; value: string; color: string }) {
@@ -50,6 +53,7 @@ export function SqlBoard({ tables, problem, onSolved }: SqlBoardProps) {
   const [result, setResult] = useState<QueryResult | null>(null)
   const [hasRun, setHasRun] = useState(false)
   const [verdict, setVerdict] = useState<GradeResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const activeTable = useMemo(() => tables.find((t) => t.name === selectedTable) ?? tables[0], [tables, selectedTable])
 
@@ -57,16 +61,21 @@ export function SqlBoard({ tables, problem, onSolved }: SqlBoardProps) {
     setIsRunning(true)
     setHasRun(false)
     setVerdict(null)
-    await new Promise((resolve) => setTimeout(resolve, 450))
-    if (problem) {
-      const { result: next, grade } = runProblemQuery(query, problem, tables)
-      setResult(next)
-      if (submit) {
-        setVerdict(grade)
-        if (grade.passed) onSolved?.()
+    setError(null)
+    try {
+      const response = problem
+        ? await (submit ? api.submitSqlProblem(problem.slug, query) : api.runSqlProblem(problem.slug, query))
+        : await api.runSqlQuery(query)
+      setResult(response.result)
+      setError(response.error ?? null)
+      useWalletStore.getState().setBalance(response.balance)
+      if (submit && response.grade) {
+        setVerdict(response.grade)
+        if (response.grade.passed) onSolved?.(response.awardedXp ?? 0)
       }
-    } else {
-      setResult(runSandboxQuery(query, tables))
+    } catch (e) {
+      setResult(null)
+      setError(errorMessage(e))
     }
     setIsRunning(false)
     setHasRun(true)
@@ -77,6 +86,7 @@ export function SqlBoard({ tables, problem, onSolved }: SqlBoardProps) {
     setResult(null)
     setHasRun(false)
     setVerdict(null)
+    setError(null)
   }
 
   return (
@@ -233,9 +243,10 @@ export function SqlBoard({ tables, problem, onSolved }: SqlBoardProps) {
             {!isRunning && hasRun && !result && (
               <div className="flex flex-col items-center gap-3 py-10 text-center">
                 <PixelSprite sprite="bugSlime" scale={3} fps={3} />
-                <p className="font-pixel text-base text-[var(--color-error)]">No table found</p>
-                <p className="max-w-sm text-sm text-[var(--color-text-secondary)]">
-                  Your query doesn't reference a known table. Try{' '}
+                <p className="font-pixel text-base text-[var(--color-error)]">Query error</p>
+                <p className="max-w-md font-mono text-sm text-[var(--color-text-secondary)]">{error ?? 'The query returned nothing.'}</p>
+                <p className="max-w-sm text-xs text-[var(--color-text-muted)]">
+                  Tables you can query:{' '}
                   {tables.map((t, i) => (
                     <span key={t.name}>
                       <span className="font-mono text-[var(--color-accent)]">{t.name}</span>
@@ -292,6 +303,7 @@ export function SqlBoard({ tables, problem, onSolved }: SqlBoardProps) {
           ) : verdict && !verdict.passed ? (
             <CoachBubble tone="error">
               <p className="mb-2 font-pixel text-[var(--color-error)]">Not quite yet</p>
+              {verdict.message && <p className="mb-2 text-[var(--color-text-primary)]">{verdict.message}</p>}
               <ul className="space-y-1.5 text-[var(--color-text-primary)]">
                 {verdict.missingHints.slice(0, 2).map((hint) => (
                   <li key={hint} className="flex gap-2">

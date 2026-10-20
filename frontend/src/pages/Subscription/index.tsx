@@ -8,8 +8,12 @@ import { Button } from '@/components/ui/Button'
 import { Confetti } from '@/components/ui/Confetti'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { XpBalance } from '@/components/economy/EconomyBits'
-import { formatInr, xpPlans, xpPacks, type Billing, type XpPack, type XpPlan } from '@/mock/subscription'
-import { planById, useSubscriptionStore } from '@/stores/subscriptionStore'
+import { useQuery } from '@tanstack/react-query'
+import type { Billing, XpPack, XpPlan } from '@/types'
+import { api } from '@/services/api'
+import { errorMessage } from '@/services/api/client'
+import { PageLoader } from '@/components/layout/PageLoader'
+import { formatInr, useSubscriptionState, useSubscriptionStore } from '@/stores/subscriptionStore'
 import { cn } from '@/utils/cn'
 
 const spendList = [
@@ -17,7 +21,6 @@ const spendList = [
   { label: 'Resume AI (summary, bullets, tailoring)', cost: '10–50 XP', to: '/resume', sprite: 'resume' },
   { label: 'Premium resume template', cost: '100–200 XP', to: '/resume', sprite: 'gem' },
   { label: 'Extra resume slot', cost: '100 XP', to: '/resume', sprite: 'chest' },
-  { label: 'Job application', cost: '20 XP', to: '/jobs', sprite: 'briefcase' },
 ] as const
 
 const fmtDate = (t: number) => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
@@ -44,6 +47,8 @@ function CheckoutDialog({ item, onClose }: { item: CheckoutItem; onClose: () => 
   const subscribe = useSubscriptionStore((s) => s.subscribe)
   const buyPack = useSubscriptionStore((s) => s.buyPack)
   const [done, setDone] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const panel = useRef<HTMLDivElement>(null)
   const summary = checkoutSummary(item)
 
@@ -54,10 +59,18 @@ function CheckoutDialog({ item, onClose }: { item: CheckoutItem; onClose: () => 
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const confirm = () => {
-    if (item.kind === 'plan') subscribe(item.plan.id, item.billing)
-    else buyPack(summary.title, item.pack.xp, item.pack.price)
-    setDone(true)
+  const confirm = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      if (item.kind === 'plan') await subscribe(item.plan.id, item.billing)
+      else await buyPack(item.pack.id)
+      setDone(true)
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
   }
 
   return createPortal(
@@ -107,12 +120,17 @@ function CheckoutDialog({ item, onClose }: { item: CheckoutItem; onClose: () => 
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-info)]" />
               Demo checkout — payments aren't connected yet, so no money is charged. Confirming adds the XP so you can try it out.
             </p>
+            {error && (
+              <p role="alert" className="mt-3 text-sm text-[var(--color-error)]">
+                {error}
+              </p>
+            )}
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="ghost" onClick={onClose}>
                 Cancel
               </Button>
-              <Button variant="pixel" onClick={confirm}>
-                Confirm demo purchase
+              <Button variant="pixel" onClick={confirm} disabled={busy}>
+                {busy ? 'Confirming…' : 'Confirm demo purchase'}
               </Button>
             </div>
           </div>
@@ -127,8 +145,9 @@ function ActivePlan() {
   const subscription = useSubscriptionStore((s) => s.subscription)
   const cancel = useSubscriptionStore((s) => s.cancel)
   const resume = useSubscriptionStore((s) => s.resume)
-  if (!subscription) return null
-  const plan = planById(subscription.planId)
+  const { data: plans = [] } = useQuery({ queryKey: ['xp-plans'], queryFn: api.getPlans })
+  const plan = subscription ? plans.find((p) => p.id === subscription.planId) : undefined
+  if (!subscription || !plan) return null
 
   return (
     <section aria-label="Your plan" className="mb-8 flex flex-wrap items-center gap-4 border-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)] p-4 sm:p-5">
@@ -148,11 +167,11 @@ function ActivePlan() {
         </p>
       </div>
       {subscription.cancelAtPeriodEnd ? (
-        <Button variant="pixel" size="sm" onClick={resume}>
+        <Button variant="pixel" size="sm" onClick={() => void resume()}>
           Keep my plan
         </Button>
       ) : (
-        <Button variant="ghost" size="sm" onClick={cancel}>
+        <Button variant="ghost" size="sm" onClick={() => void cancel()}>
           Cancel plan
         </Button>
       )}
@@ -172,8 +191,13 @@ function SectionTitle({ title, sub }: { title: string; sub: string }) {
 export default function Subscription() {
   const subscription = useSubscriptionStore((s) => s.subscription)
   const purchases = useSubscriptionStore((s) => s.purchases)
+  const loaded = useSubscriptionState()
+  const { data: xpPlans } = useQuery({ queryKey: ['xp-plans'], queryFn: api.getPlans })
+  const { data: xpPacks } = useQuery({ queryKey: ['xp-packs'], queryFn: api.getPacks })
   const [billing, setBilling] = useState<Billing>('monthly')
   const [checkout, setCheckout] = useState<CheckoutItem | null>(null)
+
+  if (!loaded || !xpPlans || !xpPacks) return <PageLoader />
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">

@@ -1,154 +1,159 @@
+import { useEffect } from 'react'
 import { create } from 'zustand'
-import type { ResumeData, ResumeTemplateId, SavedResume } from '@/types'
-import { starterResume } from '@/mock/resume'
-import { FREE_TEMPLATE_IDS, getTemplate } from '@/mock/resumeTemplates'
+import type { ResumeData, ResumeLibrary, ResumeTemplateId, SavedResume } from '@/types'
+import { api } from '@/services/api'
 import { useWalletStore } from './walletStore'
 
 /**
- * The learner's saved resumes, shared by the Resume Builder and the Job Board. Saved per browser.
- * One resume slot is free; extra slots and premium templates are bought once with XP.
+ * The learner's saved resumes, shared by the Resume Builder and the Job Board — stored on the server.
+ * Edits show instantly and are saved after a short pause. One slot is free; extra slots and premium
+ * templates are bought once with XP (the server charges).
  */
 
 export const FREE_RESUME_SLOTS = 1
 export const RESUME_SLOT_COST = 100
 export const MAX_RESUMES = 8
+const SAVE_DELAY_MS = 700
 
-const STORAGE_KEY = 'codequest-resumes-v2'
-/** Single-draft storage from before multiple resumes — migrated into the first slot. */
-const LEGACY_DRAFT_KEY = 'codequest-resume-draft-v1'
-
-interface ResumeLibrary {
+interface ResumeState {
   resumes: SavedResume[]
   activeId: string
-  /** Slots bought with XP on top of the free ones. Deleting a resume frees its slot; it's never lost. */
   extraSlots: number
   unlockedTemplates: ResumeTemplateId[]
-}
+  loaded: boolean
+  saving: boolean
+  saveError: string | null
 
-interface ResumeState extends ResumeLibrary {
+  load: () => Promise<void>
   /** Edits the active resume. */
   update: (fn: (draft: ResumeData) => ResumeData) => void
   updateById: (id: string, fn: (draft: ResumeData) => ResumeData) => void
-  reset: () => void
+  reset: () => Promise<void>
   select: (id: string) => void
-  /** Adds a resume (blank or a copy of the active one), buying a slot with XP when all are used. Returns false if it couldn't. */
-  create: (source: 'starter' | 'duplicate') => boolean
+  /** Adds a resume (blank or a copy of the active one), buying a slot with XP when all are used. */
+  create: (source: 'starter' | 'duplicate') => Promise<boolean>
   rename: (id: string, title: string) => void
-  remove: (id: string) => void
+  remove: (id: string) => Promise<void>
   setTemplate: (templateId: ResumeTemplateId) => void
-  unlockTemplate: (templateId: ResumeTemplateId) => boolean
+  unlockTemplate: (templateId: ResumeTemplateId) => Promise<boolean>
+  clear: () => void
 }
 
-let counter = 0
-const newId = () => `resume-${Date.now()}-${counter++}`
+const timers = new Map<string, number>()
 
-function makeResume(title: string, data: ResumeData, templateId: ResumeTemplateId = 'classic'): SavedResume {
-  return { id: newId(), title, templateId, data, updatedAt: Date.now() }
-}
-
-function defaults(): ResumeLibrary {
-  let data = starterResume()
-  try {
-    const legacy = window.localStorage.getItem(LEGACY_DRAFT_KEY)
-    if (legacy) data = { ...data, ...(JSON.parse(legacy) as Partial<ResumeData>) }
-  } catch {
-    // Unavailable or corrupt storage — start from the profile-based draft.
+function applyLibrary(library: ResumeLibrary) {
+  useWalletStore.getState().setBalance(library.balance)
+  return {
+    resumes: library.resumes,
+    activeId: library.activeId,
+    extraSlots: library.extraSlots,
+    unlockedTemplates: library.unlockedTemplates,
+    loaded: true,
   }
-  const first = makeResume('My resume', data)
-  return { resumes: [first], activeId: first.id, extraSlots: 0, unlockedTemplates: [...FREE_TEMPLATE_IDS] }
 }
 
-function load(): ResumeLibrary {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const saved = JSON.parse(raw) as ResumeLibrary
-      if (saved.resumes?.length) {
-        return {
-          ...saved,
-          // getTemplate() maps retired templates to their replacement, so a paid unlock carries over.
-          resumes: saved.resumes.map((r) => ({ ...r, templateId: getTemplate(r.templateId).id, data: { ...starterResume(), ...r.data } })),
-          unlockedTemplates: [...new Set([...FREE_TEMPLATE_IDS, ...(saved.unlockedTemplates ?? []).map((t) => getTemplate(t).id)])],
-        }
-      }
+export const slotCount = (s: Pick<ResumeState, 'extraSlots'>) => FREE_RESUME_SLOTS + s.extraSlots
+export const selectActive = (s: Pick<ResumeState, 'resumes' | 'activeId'>) => s.resumes.find((r) => r.id === s.activeId) ?? s.resumes[0]
+
+export const useResumeStore = create<ResumeState>((set, get) => {
+  const save = async (id: string) => {
+    timers.delete(id)
+    const resume = get().resumes.find((r) => r.id === id)
+    if (!resume) return
+    set({ saving: true })
+    try {
+      await api.saveResumeData(id, resume.data)
+      set({ saving: timers.size > 0, saveError: null })
+    } catch {
+      set({ saving: false, saveError: "Couldn't save your latest changes — they'll retry on your next edit." })
     }
-  } catch {
-    // Unavailable or corrupt storage — fall through to defaults.
   }
-  return defaults()
-}
 
-export const slotCount = (s: ResumeLibrary) => FREE_RESUME_SLOTS + s.extraSlots
-export const selectActive = (s: ResumeLibrary) => s.resumes.find((r) => r.id === s.activeId) ?? s.resumes[0]
-
-function nextTitle(resumes: SavedResume[], base: string) {
-  const taken = new Set(resumes.map((r) => r.title))
-  if (!taken.has(base)) return base
-  let n = 2
-  while (taken.has(`${base} ${n}`)) n++
-  return `${base} ${n}`
-}
-
-export const useResumeStore = create<ResumeState>((set, get) => ({
-  ...(typeof window === 'undefined' ? defaults() : load()),
-
-  update: (fn) => get().updateById(get().activeId, fn),
-
-  updateById: (id, fn) =>
-    set((s) => ({ resumes: s.resumes.map((r) => (r.id === id ? { ...r, data: fn(r.data), updatedAt: Date.now() } : r)) })),
-
-  reset: () => get().update(() => starterResume()),
-
-  select: (id) => set((s) => (s.resumes.some((r) => r.id === id) ? { activeId: id } : {})),
-
-  create: (source) => {
-    const s = get()
-    if (s.resumes.length >= MAX_RESUMES) return false
-    const needsSlot = s.resumes.length >= slotCount(s)
-    if (needsSlot && !useWalletStore.getState().spendXp(RESUME_SLOT_COST)) return false
-    const active = selectActive(s)
-    const resume =
-      source === 'duplicate'
-        ? makeResume(nextTitle(s.resumes, `${active.title} (copy)`), structuredClone(active.data), active.templateId)
-        : makeResume(nextTitle(s.resumes, 'New resume'), starterResume())
-    set({ resumes: [...s.resumes, resume], activeId: resume.id, extraSlots: s.extraSlots + (needsSlot ? 1 : 0) })
-    return true
-  },
-
-  rename: (id, title) => set((s) => ({ resumes: s.resumes.map((r) => (r.id === id ? { ...r, title: title.slice(0, 40) } : r)) })),
-
-  remove: (id) =>
-    set((s) => {
-      if (s.resumes.length <= 1) return {}
-      const resumes = s.resumes.filter((r) => r.id !== id)
-      return { resumes, activeId: s.activeId === id ? resumes[0].id : s.activeId }
-    }),
-
-  setTemplate: (templateId) =>
-    set((s) =>
-      s.unlockedTemplates.includes(templateId)
-        ? { resumes: s.resumes.map((r) => (r.id === s.activeId ? { ...r, templateId, updatedAt: Date.now() } : r)) }
-        : {},
-    ),
-
-  unlockTemplate: (templateId) => {
-    const s = get()
-    if (s.unlockedTemplates.includes(templateId)) return true
-    if (!useWalletStore.getState().spendXp(getTemplate(templateId).cost)) return false
-    set({ unlockedTemplates: [...s.unlockedTemplates, templateId] })
-    return true
-  },
-}))
-
-function persist(state: ResumeLibrary) {
-  const { resumes, activeId, extraSlots, unlockedTemplates } = state
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ resumes, activeId, extraSlots, unlockedTemplates }))
-  } catch {
-    // Storage unavailable — resumes still work for this session.
+  const flush = async () => {
+    const pending = [...timers.keys()]
+    for (const id of pending) window.clearTimeout(timers.get(id))
+    await Promise.all(pending.map(save))
   }
-}
 
-// Save right away too, so a freshly created or migrated library keeps stable ids across reloads.
-if (typeof window !== 'undefined') persist(useResumeStore.getState())
-useResumeStore.subscribe(persist)
+  return {
+    resumes: [],
+    activeId: '',
+    extraSlots: 0,
+    unlockedTemplates: [],
+    loaded: false,
+    saving: false,
+    saveError: null,
+
+    load: async () => set(applyLibrary(await api.getResumes())),
+
+    update: (fn) => get().updateById(get().activeId, fn),
+
+    updateById: (id, fn) => {
+      set((s) => ({ resumes: s.resumes.map((r) => (r.id === id ? { ...r, data: fn(r.data), updatedAt: Date.now() } : r)) }))
+      window.clearTimeout(timers.get(id))
+      timers.set(id, window.setTimeout(() => void save(id), SAVE_DELAY_MS))
+    },
+
+    reset: async () => {
+      const id = get().activeId
+      window.clearTimeout(timers.get(id))
+      timers.delete(id)
+      const fresh = await api.resetResume(id)
+      set((s) => ({ resumes: s.resumes.map((r) => (r.id === id ? fresh : r)) }))
+    },
+
+    select: (id) => {
+      if (!get().resumes.some((r) => r.id === id)) return
+      set({ activeId: id })
+      void api.activateResume(id).catch(() => undefined)
+    },
+
+    create: async (source) => {
+      await flush() // a duplicate must copy what's on screen
+      set(applyLibrary(await api.createResume(source)))
+      return true
+    },
+
+    rename: (id, title) => {
+      set((s) => ({ resumes: s.resumes.map((r) => (r.id === id ? { ...r, title: title.slice(0, 40) } : r)) }))
+      void api.patchResume(id, { title: title.slice(0, 40) }).catch(() => undefined)
+    },
+
+    remove: async (id) => {
+      window.clearTimeout(timers.get(id))
+      timers.delete(id)
+      set(applyLibrary(await api.deleteResume(id)))
+    },
+
+    setTemplate: (templateId) => {
+      const { activeId, unlockedTemplates } = get()
+      if (!unlockedTemplates.includes(templateId)) return
+      set((s) => ({ resumes: s.resumes.map((r) => (r.id === activeId ? { ...r, templateId, updatedAt: Date.now() } : r)) }))
+      void api.patchResume(activeId, { templateId }).catch(() => undefined)
+    },
+
+    unlockTemplate: async (templateId) => {
+      if (get().unlockedTemplates.includes(templateId)) return true
+      const library = await api.unlockTemplate(templateId)
+      set({ unlockedTemplates: library.unlockedTemplates })
+      useWalletStore.getState().setBalance(library.balance)
+      return true
+    },
+
+    clear: () => {
+      for (const t of timers.values()) window.clearTimeout(t)
+      timers.clear()
+      set({ resumes: [], activeId: '', extraSlots: 0, unlockedTemplates: [], loaded: false, saving: false, saveError: null })
+    },
+  }
+})
+
+/** Loads the resume library once per session; components render once `loaded` is true. */
+export function useResumeLibrary() {
+  const loaded = useResumeStore((s) => s.loaded)
+  const load = useResumeStore((s) => s.load)
+  useEffect(() => {
+    if (!loaded) void load().catch(() => undefined)
+  }, [loaded, load])
+  return loaded
+}

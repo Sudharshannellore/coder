@@ -6,9 +6,11 @@ import { Avatar } from '@/components/ui/Avatar'
 import { Badge, difficultyVariant } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
-import { problems } from '@/mock/problems'
-import { findPlayer, type Player } from '@/mock/players'
-import { DUEL_STAKES, DUEL_TIME_LIMITS, DUEL_WIN_BONUS, useSocialStore } from '@/stores/socialStore'
+import { useQuery } from '@tanstack/react-query'
+import type { Player } from '@/types'
+import { api } from '@/services/api'
+import { errorMessage } from '@/services/api/client'
+import { DUEL_STAKES, DUEL_TIME_LIMITS, DUEL_WIN_BONUS, useFindPlayer, useSocialStore } from '@/stores/socialStore'
 import { useWalletStore } from '@/stores/walletStore'
 import { cn } from '@/utils/cn'
 
@@ -27,10 +29,15 @@ export function NewDuelDialog({ initialFriendId, onClose, onSent }: { initialFri
   const friends = useSocialStore((s) => s.friends)
   const sendDuel = useSocialStore((s) => s.sendDuel)
   const xp = useWalletStore((s) => s.xp)
+  const findPlayer = useFindPlayer()
   const friendPlayers = friends.map(findPlayer).filter((p): p is Player => !!p)
+  const { data: problems = [] } = useQuery({ queryKey: ['problems'], queryFn: api.getProblems })
 
   const [friendId, setFriendId] = useState(initialFriendId && friends.includes(initialFriendId) ? initialFriendId : friendPlayers[0]?.id)
-  const [problemSlug, setProblemSlug] = useState(problems[0].slug)
+  const [problemSlug, setProblemSlug] = useState<string | undefined>()
+  const chosenSlug = problemSlug ?? problems[0]?.slug
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [limit, setLimit] = useState<number>(20)
   const [stake, setStake] = useState<number>(25)
   const panel = useRef<HTMLDivElement>(null)
@@ -43,7 +50,7 @@ export function NewDuelDialog({ initialFriendId, onClose, onSent }: { initialFri
   }, [onClose])
 
   const friend = friendId ? findPlayer(friendId) : undefined
-  const canSend = !!friend && xp >= stake
+  const canSend = !!friend && !!chosenSlug && xp >= stake && !sending
 
   return createPortal(
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -97,9 +104,9 @@ export function NewDuelDialog({ initialFriendId, onClose, onSent }: { initialFri
                 <button
                   key={p.slug}
                   type="button"
-                  aria-pressed={problemSlug === p.slug}
+                  aria-pressed={chosenSlug === p.slug}
                   onClick={() => setProblemSlug(p.slug)}
-                  className={cn('flex items-center justify-between gap-2 border-2 px-3 py-2 text-left transition-colors', problemSlug === p.slug ? 'border-[var(--color-violet)] bg-[var(--color-violet-soft)]' : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]')}
+                  className={cn('flex items-center justify-between gap-2 border-2 px-3 py-2 text-left transition-colors', chosenSlug === p.slug ? 'border-[var(--color-violet)] bg-[var(--color-violet-soft)]' : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]')}
                 >
                   <span className="font-pixel text-sm">{p.title}</span>
                   <Badge variant={difficultyVariant(p.difficulty)} className="capitalize">
@@ -147,6 +154,11 @@ export function NewDuelDialog({ initialFriendId, onClose, onSent }: { initialFri
           </div>
         </div>
 
+        {error && (
+          <p role="alert" className="mt-4 text-sm text-[var(--color-error)]">
+            {error}
+          </p>
+        )}
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -154,11 +166,19 @@ export function NewDuelDialog({ initialFriendId, onClose, onSent }: { initialFri
           <Button
             variant="pixelViolet"
             disabled={!canSend}
-            onClick={() => {
-              if (friend && sendDuel({ friendId: friend.id, problemSlug, timeLimitMinutes: limit, stake })) onSent()
+            onClick={async () => {
+              if (!friend || !chosenSlug) return
+              setSending(true)
+              setError(null)
+              try {
+                if (await sendDuel({ friendId: friend.id, problemSlug: chosenSlug, timeLimitMinutes: limit, stake })) onSent()
+              } catch (e) {
+                setError(errorMessage(e))
+                setSending(false)
+              }
             }}
           >
-            <Swords className="h-4 w-4" /> Send challenge{friend ? ` to ${friend.username.split(' ')[0]}` : ''}
+            <Swords className="h-4 w-4" /> {sending ? 'Sending…' : 'Send challenge'}{friend ? ` to ${friend.username.split(' ')[0]}` : ''}
           </Button>
         </div>
       </motion.div>

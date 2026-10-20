@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Check, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { XpPurchaseButton } from '@/components/economy/XpPurchaseButton'
-import { getTemplate } from '@/mock/resumeTemplates'
+import { templateName, useResumeTemplates } from './templates'
 import { MAX_RESUMES, RESUME_SLOT_COST, slotCount, useResumeStore } from '@/stores/resumeStore'
 import { cn } from '@/utils/cn'
 
@@ -31,6 +31,7 @@ function NewResumeButton({ source, label, freeSlot, full }: { source: 'starter' 
 
 /** "My resumes" bar: switch, rename, duplicate and delete resumes; extra slots cost XP. */
 export function ResumeLibrary() {
+  const templates = useResumeTemplates()
   const resumes = useResumeStore((s) => s.resumes)
   const activeId = useResumeStore((s) => s.activeId)
   const slots = useResumeStore(slotCount)
@@ -111,7 +112,7 @@ export function ResumeLibrary() {
                     <PixelSprite sprite="resume" scale={1.5} className={cn(active && 'animate-pixel-bob')} />
                     <span className="min-w-0">
                       <span className={cn('block truncate font-pixel text-sm', active && 'text-[var(--color-accent)]')}>{r.title}</span>
-                      <span className="block truncate text-[11px] text-[var(--color-text-muted)]">{getTemplate(r.templateId).name} template</span>
+                      <span className="block truncate text-[11px] text-[var(--color-text-muted)]">{templateName(templates, r.templateId)} template</span>
                     </span>
                   </button>
                   {active && (

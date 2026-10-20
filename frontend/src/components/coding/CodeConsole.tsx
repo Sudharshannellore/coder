@@ -101,6 +101,8 @@ export function CodeConsole({ problem, tab, onTabChange, result, isRunning, subm
             status={isRunning ? 'running' : (result?.status ?? 'idle')}
             runtimeMs={result?.runtimeMs}
             memoryMb={result?.memoryMb}
+            error={result?.error}
+            stdout={result?.stdout}
             className={flush}
           />
         )}

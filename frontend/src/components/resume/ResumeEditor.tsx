@@ -5,7 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import type { SpriteName } from '@/components/pixel/sprites'
 import { AiButton } from './AiButton'
-import { generateSummary, improveBullet, RESUME_AI_COST, suggestSkills } from '@/services/resumeAi'
+import { RESUME_AI_COST, suggestSkills } from '@/services/resumeAi'
+import { api } from '@/services/api'
+import { useWalletStore } from '@/stores/walletStore'
 import { cn } from '@/utils/cn'
 
 export type ResumeUpdate = (fn: (draft: ResumeData) => ResumeData) => void
@@ -93,7 +95,11 @@ function EntryList({ entries, onChange, labels, withBullets = true }: EntryListP
                       size="sm"
                       cost={RESUME_AI_COST.bullet}
                       disabled={!bullet.trim()}
-                      onRun={() => patch(entry.id, (x) => ({ ...x, bullets: x.bullets.map((b, j) => (j === i ? improveBullet(b) : b)) }))}
+                      onRun={async () => {
+                        const { text, balance } = await api.improveBullet(bullet)
+                        useWalletStore.getState().setBalance(balance)
+                        patch(entry.id, (x) => ({ ...x, bullets: x.bullets.map((b, j) => (j === i ? text : b)) }))
+                      }}
                     />
                     <button
                       type="button"
@@ -167,7 +173,17 @@ export function ResumeEditor({ data, update }: { data: ResumeData; update: Resum
       <SectionCard
         title="Summary"
         sprite="scroll"
-        action={<AiButton label="Write summary" cost={RESUME_AI_COST.summary} onRun={() => update((d) => ({ ...d, summary: generateSummary(d) }))} />}
+        action={
+          <AiButton
+            label="Write summary"
+            cost={RESUME_AI_COST.summary}
+            onRun={async () => {
+              const { text, balance } = await api.writeSummary(data)
+              useWalletStore.getState().setBalance(balance)
+              update((d) => ({ ...d, summary: text }))
+            }}
+          />
+        }
       >
         <textarea
           className={cn(inputClass, 'resize-y')}
@@ -187,10 +203,14 @@ export function ResumeEditor({ data, update }: { data: ResumeData; update: Resum
             <AiButton
               label="Suggest skills"
               cost={RESUME_AI_COST.skills}
-              onRun={() => update((d) => ({ ...d, skills: [...d.skills, ...suggestSkills(d.skills)] }))}
+              onRun={async () => {
+                const { skills, balance } = await api.suggestSkills(data.skills)
+                useWalletStore.getState().setBalance(balance)
+                update((d) => ({ ...d, skills: [...d.skills, ...skills.filter((s) => !d.skills.includes(s))] }))
+              }}
             />
           ) : (
-            <span className="font-pixel text-xs text-[var(--color-text-muted)]">All CodeQuest skills added</span>
+            <span className="font-pixel text-xs text-[var(--color-text-muted)]">All Logicraft skills added</span>
           )
         }
       >
@@ -249,7 +269,7 @@ export function ResumeEditor({ data, update }: { data: ResumeData; update: Resum
         />
       </SectionCard>
 
-      <SectionCard title="CodeQuest achievements" sprite="trophy">
+      <SectionCard title="Logicraft achievements" sprite="trophy">
         <label className="flex cursor-pointer items-start gap-3">
           <input
             type="checkbox"
@@ -258,7 +278,7 @@ export function ResumeEditor({ data, update }: { data: ResumeData; update: Resum
             className="mt-0.5 h-4 w-4 accent-[var(--color-accent)]"
           />
           <span className="text-sm text-[var(--color-text-secondary)]">
-            Show your CodeQuest rank, league, problems solved and practice streak as resume achievements.
+            Show your Logicraft rank, league, problems solved and practice streak as resume achievements.
           </span>
         </label>
       </SectionCard>

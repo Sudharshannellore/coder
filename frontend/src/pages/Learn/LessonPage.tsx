@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ArrowLeft, ArrowRight, Clock, X } from 'lucide-react'
 import { api } from '@/services/api'
+import { errorMessage } from '@/services/api/client'
 import type { AIMessage, Lesson } from '@/types'
 import { Card } from '@/components/ui/Card'
-import { Button } from '@/components/ui/Button'
+import { Button, buttonVariants } from '@/components/ui/Button'
 import { PageLoader } from '@/components/layout/PageLoader'
 import { QuizCard } from '@/components/learning/QuizCard'
+import { LessonResources } from '@/components/learning/LessonResources'
 import { StepCode, StepComplete, StepConcept, StepTryIt, StepVisualize } from '@/components/learning/LessonSteps'
 import { AICoach } from '@/components/ai/AICoach'
-import { mentorReply, suggestedQuestions, type MentorContext } from '@/services/questAi'
 import { QuestAIAvatar } from '@/components/illustrations/QuestAIAvatar'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import type { SpriteName } from '@/components/pixel/sprites'
@@ -28,7 +29,7 @@ interface Step {
 }
 
 function buildSteps(lesson: Lesson): Step[] {
-  const steps: Step[] = [{ id: 'concept', label: 'Concept', title: `What is a ${lesson.concept.replace(/s$/, '').toLowerCase()}?`, sprite: 'book' }]
+  const steps: Step[] = [{ id: 'concept', label: 'Concept', title: `Understanding ${lesson.concept}`, sprite: 'book' }]
   if (lesson.concept.toLowerCase().includes('hash')) steps.push({ id: 'visualize', label: 'Visualize', title: 'See it in action', sprite: 'treasureMap' })
   steps.push({ id: 'code', label: 'Code', title: 'Read the code', sprite: 'terminal' })
   if (lesson.tryIt) steps.push({ id: 'tryit', label: 'Try it', title: 'Your turn', sprite: 'sword' })
@@ -80,8 +81,9 @@ function StepProgress({ steps, current, maxReached, onJump }: { steps: Step[]; c
 export default function LessonPage() {
   const { courseId = '', lessonId = '' } = useParams<{ courseId: string; lessonId: string }>()
   const { data: course } = useQuery({ queryKey: ['course', courseId], queryFn: () => api.getCourse(courseId), enabled: Boolean(courseId) })
-  const { data: lesson } = useQuery({ queryKey: ['lesson', lessonId], queryFn: () => api.getLesson(lessonId), enabled: Boolean(lessonId) })
+  const { data: lesson, error: lessonError } = useQuery({ queryKey: ['lesson', lessonId], queryFn: () => api.getLesson(lessonId), enabled: Boolean(lessonId) })
   const reduceMotion = useReducedMotion()
+  const queryClient = useQueryClient()
 
   const [index, setIndex] = useState(0)
   const [maxReached, setMaxReached] = useState(0)
@@ -90,9 +92,16 @@ export default function LessonPage() {
   const [aiOpen, setAiOpen] = useState(false)
   const [messages, setMessages] = useState<AIMessage[]>([])
   const [lessonAward, setLessonAward] = useState<number | null>(null)
-  const rewardOnce = useWalletStore((s) => s.rewardOnce)
+  const [finishError, setFinishError] = useState<string | null>(null)
+  const setBalance = useWalletStore((s) => s.setBalance)
 
   const steps = useMemo(() => (lesson ? buildSteps(lesson) : []), [lesson])
+  const currentStep = steps[index]?.id
+  const { data: suggestions = [] } = useQuery({
+    queryKey: ['mentor-suggestions', 'lesson', lessonId, currentStep],
+    queryFn: () => api.getMentorSuggestions({ kind: 'lesson', ref: lessonId, step: currentStep }),
+    enabled: Boolean(lesson),
+  })
 
   useEffect(() => {
     if (!lesson) return
@@ -117,6 +126,20 @@ export default function LessonPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [aiOpen])
 
+  if (lesson === null || course === null || lessonError) {
+    return (
+      <div className="mx-auto flex max-w-xl flex-col items-center gap-4 px-4 py-24 text-center">
+        <PixelSprite sprite="bugSlime" scale={5} fps={3} className="animate-pixel-bob" />
+        <h1 className="text-xl">{lessonError ? "Couldn't load this lesson" : 'Lesson not found'}</h1>
+        <p className="text-sm text-[var(--color-text-secondary)]">
+          {lessonError ? errorMessage(lessonError) : 'It may have moved, or this topic has no lesson yet.'}
+        </p>
+        <Link to={courseId ? `/learn/${courseId}` : '/learn'} className={buttonVariants({ variant: 'pixel' })}>
+          Back to the map
+        </Link>
+      </div>
+    )
+  }
   if (!course || !lesson) return <PageLoader />
 
   const isComplete = index >= steps.length
@@ -124,33 +147,46 @@ export default function LessonPage() {
   const xp = lesson.xp ?? 50
   const moduleTitle = course.modules.find((m) => m.id === lesson.moduleId)?.title
 
-  const goTo = (i: number) => {
-    if (i >= steps.length && lessonAward === null) setLessonAward(rewardOnce(`lesson:${lesson.id}`, xp))
+  const finishLesson = async () => {
+    setFinishError(null)
+    try {
+      const completion = await api.completeLesson(lesson.id)
+      setBalance(completion.balance)
+      setLessonAward(completion.awarded)
+      // The map, course progress and today's quest all moved on.
+      void queryClient.invalidateQueries({ queryKey: ['course-path', courseId] })
+      void queryClient.invalidateQueries({ queryKey: ['course', courseId] })
+      void queryClient.invalidateQueries({ queryKey: ['courses'] })
+      void queryClient.invalidateQueries({ queryKey: ['daily-quest'] })
+      void queryClient.invalidateQueries({ queryKey: ['lesson', lessonId] })
+      return true
+    } catch (e) {
+      setFinishError(errorMessage(e))
+      return false
+    }
+  }
+
+  const goTo = async (i: number) => {
+    if (i >= steps.length && lessonAward === null && !(await finishLesson())) return
     setIndex(i)
     setMaxReached((m) => Math.max(m, i))
   }
 
   const canContinue = !step || (step.id === 'tryit' ? tryPassed : step.id === 'quiz' ? quizCorrect : true)
 
-  const mentorContext: MentorContext = {
-    kind: 'lesson',
-    title: lesson.title,
-    concept: lesson.concept,
-    explanation: lesson.explanation,
-    analogy: lesson.analogy,
-    keyPoints: lesson.keyPoints,
-    step: step?.id,
-    tryHint: lesson.tryIt?.checks.map((c) => c.hint).join(' Then: '),
-  }
-
-  const handleAsk = (question: string) => {
+  const handleAsk = async (question: string) => {
     const now = new Date().toISOString()
     const turn = messages.filter((m) => m.role === 'user').length
-    setMessages((prev) => [
-      ...prev,
-      { id: `u-${Date.now()}`, role: 'user', text: question, timestamp: now },
-      { id: `a-${Date.now()}`, role: 'ai', text: mentorReply(question, mentorContext, turn), timestamp: now },
-    ])
+    const pendingId = `u-${Date.now()}`
+    setMessages((prev) => [...prev, { id: pendingId, role: 'user', text: question, timestamp: now }])
+    try {
+      const reply = await api.askMentor({ kind: 'lesson', lessonId: lesson.id, step: step?.id }, question, turn)
+      setBalance(reply.balance)
+      setMessages((prev) => [...prev, reply.answer])
+    } catch (e) {
+      setMessages((prev) => prev.filter((m) => m.id !== pendingId))
+      throw e
+    }
   }
 
   return (
@@ -223,8 +259,8 @@ export default function LessonPage() {
 
                 {step.id === 'concept' && <StepConcept lesson={lesson} />}
                 {step.id === 'visualize' && <StepVisualize />}
-                {step.id === 'code' && <StepCode lesson={lesson} />}
-                {step.id === 'tryit' && <StepTryIt lesson={lesson} onPassed={() => setTryPassed(true)} />}
+                {step.id === 'code' && <StepCode lesson={lesson} language={course.language} />}
+                {step.id === 'tryit' && <StepTryIt lesson={lesson} language={course.language} onPassed={() => setTryPassed(true)} />}
                 {step.id === 'quiz' && (
                   <QuizCard
                     className="max-w-4xl"
@@ -263,6 +299,13 @@ export default function LessonPage() {
           </div>
         </nav>
       )}
+      {finishError && (
+        <p role="alert" className="mt-3 text-right text-sm text-[var(--color-error)]">
+          {finishError}
+        </p>
+      )}
+
+      <LessonResources lessonId={lesson.id} className="mt-8" />
 
       {/* Quest AI drawer */}
       <AnimatePresence>
@@ -292,7 +335,7 @@ export default function LessonPage() {
               >
                 <X className="h-4 w-4" />
               </button>
-              <AICoach messages={messages} onAsk={handleAsk} suggestions={suggestedQuestions(mentorContext)} className="h-full border-0 shadow-none" />
+              <AICoach messages={messages} onAsk={handleAsk} suggestions={suggestions} className="h-full border-0 shadow-none" />
             </motion.aside>
           </>
         )}

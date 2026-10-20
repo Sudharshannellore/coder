@@ -1,42 +1,60 @@
+import { useEffect } from 'react'
 import { create } from 'zustand'
-import type { JobApplication } from '@/types'
+import type { ApplicationStatus, JobApplication, ResumeData } from '@/types'
+import { api } from '@/services/api'
+import { useWalletStore } from './walletStore'
 
-/** Job applications submitted from the Job Board. Client-side stand-in for an applications API. */
-
-const STORAGE_KEY = 'codequest-applications-v1'
-
-function load(): JobApplication[] {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw) as JobApplication[]
-  } catch {
-    // Unavailable or corrupt storage — start with no applications.
-  }
-  return []
-}
+/**
+ * The player's job application tracker, stored on the server. Applying happens on the job board's site;
+ * this keeps what was prepared (resume, cover note) and where each application stands.
+ */
 
 interface ApplicationsState {
   applications: JobApplication[]
-  add: (application: Omit<JobApplication, 'id' | 'appliedAt'>) => void
+  loaded: boolean
+  load: () => Promise<void>
+  /** Tracks an application being made on the board's site. Free. */
+  track: (
+    jobId: string,
+    input: { resumeId: string; resume?: ResumeData; coverNote: string; tailored: boolean; aiXpSpent: number },
+  ) => Promise<JobApplication>
+  setStatus: (id: string, status: ApplicationStatus) => Promise<void>
+  reset: () => void
 }
 
 export const useApplicationsStore = create<ApplicationsState>((set) => ({
-  applications: typeof window === 'undefined' ? [] : load(),
-  add: (application) =>
-    set((s) => ({
-      applications: [{ ...application, id: `app-${Date.now()}`, appliedAt: Date.now() }, ...s.applications],
-    })),
+  applications: [],
+  loaded: false,
+
+  load: async () => set({ applications: await api.getApplications(), loaded: true }),
+
+  track: async (jobId, input) => {
+    const { application, balance } = await api.applyToJob(jobId, input)
+    useWalletStore.getState().setBalance(balance)
+    set((s) => ({ applications: [application, ...s.applications] }))
+    return application
+  },
+
+  setStatus: async (id, status) => {
+    const updated = await api.updateApplication(id, status)
+    set((s) => ({ applications: s.applications.map((a) => (a.id === id ? updated : a)) }))
+  },
+
+  reset: () => set({ applications: [], loaded: false }),
 }))
 
-useApplicationsStore.subscribe((state) => {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state.applications))
-  } catch {
-    // Storage unavailable — applications still show for this session.
-  }
-})
+/** Loads the player's applications once per session. */
+export function useApplications() {
+  const { applications, loaded, load } = useApplicationsStore()
+  useEffect(() => {
+    if (!loaded) void load().catch(() => undefined)
+  }, [loaded, load])
+  return applications
+}
 
-/** Mock pipeline: an application moves to review a minute after it's sent. */
-export function applicationStatus(app: JobApplication, now = Date.now()): { label: string; tone: 'info' | 'violet' } {
-  return now - app.appliedAt < 60_000 ? { label: 'Submitted', tone: 'info' } : { label: 'In review', tone: 'violet' }
+export const APPLICATION_STATUSES: Record<ApplicationStatus, { label: string; tone: 'info' | 'violet' | 'success' | 'neutral' }> = {
+  applied: { label: 'Applied', tone: 'info' },
+  interviewing: { label: 'Interviewing', tone: 'violet' },
+  offer: { label: 'Offer', tone: 'success' },
+  rejected: { label: 'Not this time', tone: 'neutral' },
 }

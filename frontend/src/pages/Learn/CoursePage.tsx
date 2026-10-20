@@ -8,17 +8,9 @@ import { PageLoader } from '@/components/layout/PageLoader'
 import { EmptyStateArt } from '@/components/illustrations/EmptyStateArt'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { PixelBar } from '@/components/pixel/PixelBar'
-import type { SpriteName } from '@/components/pixel/sprites'
 import { WorldMap } from '@/components/learning/WorldMap'
+import { languageMeta } from '@/components/learning/languages'
 import { cn } from '@/utils/cn'
-
-const PLACEHOLDER_LESSON_ID = 'lesson-hash-tables'
-
-const WORLD_SPRITES: Record<string, SpriteName> = {
-  'python-mastery': 'book',
-  'javascript-essentials': 'terminal',
-  'sql-foundations': 'database',
-}
 
 export default function CoursePage() {
   const { courseId } = useParams<{ courseId: string }>()
@@ -57,10 +49,12 @@ export default function CoursePage() {
     )
   }
 
-  const worldSprite = WORLD_SPRITES[course.id] ?? 'star'
+  const worldSprite = languageMeta(course.language).sprite
   const topics = path.flatMap((z) => z.nodes)
   const clearedTopics = topics.filter((n) => n.state === 'completed').length
   const bossesDown = path.filter((z) => z.boss.state === 'completed').length
+  // Continue where the map says you are; once everything is cleared, revisit the last topic.
+  const nextTopic = topics.find((n) => n.state === 'current') ?? topics[topics.length - 1]
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
@@ -83,7 +77,7 @@ export default function CoursePage() {
           </div>
         </div>
         <Link
-          to={`/learn/${course.id}/${PLACEHOLDER_LESSON_ID}`}
+          to={nextTopic ? `/learn/${course.id}/${nextTopic.lessonId}` : `/learn/${course.id}`}
           className={cn(buttonVariants({ size: 'lg' }), 'shrink-0')}
         >
           Continue Learning
@@ -132,7 +126,7 @@ export default function CoursePage() {
               </li>
             </ul>
           </div>
-          <WorldMap zones={path} lessonHref={`/learn/${course.id}/${PLACEHOLDER_LESSON_ID}`} bossHref="/challenges/boss" />
+          <WorldMap zones={path} lessonHref={(node) => `/learn/${course.id}/${node.lessonId}`} bossHref={(boss) => `/learn/${course.id}/boss/${boss.id}`} />
         </section>
       )}
 

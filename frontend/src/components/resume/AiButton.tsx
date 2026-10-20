@@ -1,49 +1,58 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Sparkles } from 'lucide-react'
+import { errorMessage } from '@/services/api/client'
 import { useWalletStore } from '@/stores/walletStore'
 import { cn } from '@/utils/cn'
 
 interface AiButtonProps {
   label: string
   cost: number
-  /** Applies the AI result; runs only after the XP has been charged. */
-  onRun: () => void
+  /** Calls the Quest AI endpoint (which charges the XP) and applies its result. */
+  onRun: () => Promise<unknown> | void
   disabled?: boolean
   size?: 'sm' | 'md'
   className?: string
 }
 
-const THINKING_MS = 900
-
-/** An AI action that charges XP: shows its price, spends on click, "thinks", then applies the result. */
+/** A paid AI action: shows its price, "thinks" while the server works, then flashes the charge. */
 export function AiButton({ label, cost, onRun, disabled, size = 'md', className }: AiButtonProps) {
   const xp = useWalletStore((s) => s.xp)
-  const spendXp = useWalletStore((s) => s.spendXp)
   const [thinking, setThinking] = useState(false)
   const [charged, setCharged] = useState(false)
-  const timers = useRef<number[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const timer = useRef<number | undefined>(undefined)
+  const mounted = useRef(true)
 
-  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), [])
+  useEffect(
+    () => () => {
+      mounted.current = false
+      window.clearTimeout(timer.current)
+    },
+    [],
+  )
 
   const short = cost - xp
   const cantAfford = short > 0
 
-  const run = () => {
-    if (thinking || disabled || !spendXp(cost)) return
+  const run = async () => {
+    if (thinking || disabled) return
     setThinking(true)
-    timers.current.push(
-      window.setTimeout(() => {
-        onRun()
-        setThinking(false)
-        setCharged(true)
-        timers.current.push(window.setTimeout(() => setCharged(false), 1400))
-      }, THINKING_MS),
-    )
+    setError(null)
+    try {
+      await onRun()
+      if (!mounted.current) return
+      setCharged(true)
+      timer.current = window.setTimeout(() => setCharged(false), 1400)
+    } catch (e) {
+      if (mounted.current) setError(errorMessage(e))
+    } finally {
+      if (mounted.current) setThinking(false)
+    }
   }
 
   return (
-    <span className={cn('relative inline-flex', className)}>
+    <span className={cn('relative inline-flex flex-col items-end', className)}>
       <button
         type="button"
         onClick={run}
@@ -58,6 +67,11 @@ export function AiButton({ label, cost, onRun, disabled, size = 'md', className 
         {thinking ? 'Thinking…' : label}
         {!thinking && <span className="opacity-80">· {cost} XP</span>}
       </button>
+      {error && (
+        <span role="alert" className="mt-1 max-w-[260px] text-right text-[11px] text-[var(--color-error)]">
+          {error}
+        </span>
+      )}
       <AnimatePresence>
         {charged && (
           <motion.span

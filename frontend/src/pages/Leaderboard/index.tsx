@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Globe, Users, CalendarDays, CalendarRange, Code2 } from 'lucide-react'
-import { api } from '@/services/api'
+import { Globe, Users, CalendarDays, CalendarRange } from 'lucide-react'
+import { api, type LeaderboardScope } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Avatar } from '@/components/ui/Avatar'
 import { Badge } from '@/components/ui/Badge'
@@ -11,15 +12,21 @@ import { PixelSprite } from '@/components/pixel/PixelSprite'
 import type { LeaderboardEntry } from '@/types'
 import { cn } from '@/utils/cn'
 
-type Tab = 'global' | 'friends' | 'weekly' | 'monthly' | 'language'
+type Tab = LeaderboardScope
 
 const tabs: { id: Tab; label: string; icon: typeof Globe }[] = [
   { id: 'global', label: 'Global', icon: Globe },
   { id: 'friends', label: 'Friends', icon: Users },
   { id: 'weekly', label: 'Weekly', icon: CalendarDays },
   { id: 'monthly', label: 'Monthly', icon: CalendarRange },
-  { id: 'language', label: 'Language', icon: Code2 },
 ]
+
+const TAB_CAPTIONS: Record<Tab, string> = {
+  global: 'All-time XP across every player.',
+  friends: 'You and your friends, by all-time XP.',
+  weekly: 'XP earned in the last 7 days.',
+  monthly: 'XP earned in the last 30 days.',
+}
 
 function rankAccent(rank: number) {
   if (rank === 1) return { color: '#f0c550', sprite: 'crown' as const }
@@ -69,17 +76,14 @@ function LeaderboardRow({ entry }: { entry: LeaderboardEntry }) {
 }
 
 export default function Leaderboard() {
-  const { data: leaderboard } = useQuery({ queryKey: ['leaderboard'], queryFn: api.getLeaderboard })
   const [tab, setTab] = useState<Tab>('global')
+  const { data: rows, isLoading } = useQuery({ queryKey: ['leaderboard', tab], queryFn: () => api.getLeaderboard(tab) })
 
-  const sortedByXp = useMemo(() => (leaderboard ? [...leaderboard].sort((a, b) => b.xp - a.xp) : []), [leaderboard])
-  const reshuffled = useMemo(() => (leaderboard ? [...leaderboard].sort((a, b) => b.winRate - a.winRate) : []), [leaderboard])
+  if (isLoading || !rows) return <PageLoader />
 
-  if (!leaderboard) return <PageLoader />
-
-  const showComingSoon = tab === 'friends'
-
-  const rows = tab === 'global' ? sortedByXp : tab === 'weekly' || tab === 'monthly' || tab === 'language' ? reshuffled : []
+  // Only me on the friends board: nudge toward adding friends.
+  const showComingSoon = tab === 'friends' && rows.length <= 1
+  const caption = TAB_CAPTIONS[tab]
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
@@ -113,24 +117,24 @@ export default function Leaderboard() {
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-14 text-center">
             <EmptyStateArt className="h-28 w-36" />
-            <p className="font-semibold">Friends leaderboard is coming soon</p>
+            <p className="font-semibold">No friends on the board yet</p>
             <p className="max-w-sm text-sm text-[var(--color-text-secondary)]">
-              Add friends to compare progress head-to-head. For now, check out how you rank globally.
+              Add friends by their Player ID to compare progress head-to-head.
             </p>
-            <button
-              onClick={() => setTab('global')}
-              className="rounded-[var(--radius-md)] bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-[#06120a]"
-            >
-              View Global Leaderboard
-            </button>
+            <Link to="/friends?tab=add" className="rounded-[var(--radius-md)] bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-[#06120a]">
+              Add friends
+            </Link>
           </CardContent>
         </Card>
       ) : (
         <Card>
           <CardContent className="space-y-1">
-            {rows.map((entry) => (
-              <LeaderboardRow key={entry.rank} entry={entry} />
-            ))}
+            <p className="mb-2 text-xs text-[var(--color-text-muted)]">{caption}</p>
+            {rows.length === 0 ? (
+              <p className="py-8 text-center text-sm text-[var(--color-text-secondary)]">No XP earned in this period yet.</p>
+            ) : (
+              rows.map((entry) => <LeaderboardRow key={entry.userId} entry={entry} />)
+            )}
           </CardContent>
         </Card>
       )}

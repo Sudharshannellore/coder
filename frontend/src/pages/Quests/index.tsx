@@ -8,7 +8,6 @@ import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { cn } from '@/utils/cn'
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const LOCKED_QUEST_LEVELS = [19, 20, 22]
 
 /** Mon-first week strip; days since Monday up to today count toward the streak (capped by streakDays). */
 function buildWeek(streakDays: number) {
@@ -98,37 +97,6 @@ export default function Quests() {
       <QuestCard quest={quest} />
 
       <StreakRewards streakDays={user.streakDays} className="mt-6" />
-
-      <section className="mt-8" aria-labelledby="locked-quests">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 id="locked-quests" className="text-lg">
-            Upcoming quests
-          </h2>
-          <span className="font-pixel text-xs text-[var(--color-text-muted)]">Lv {user.level} now</span>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {LOCKED_QUEST_LEVELS.map((lvl) => (
-            <div
-              key={lvl}
-              className="pixel-scanlines flex flex-col items-center gap-2 border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-5 text-center"
-            >
-              <PixelSprite sprite="lock" scale={3} />
-              <p className="font-pixel text-xl tracking-widest text-[var(--color-text-muted)]">???</p>
-              <p className="font-pixel text-xs text-[var(--color-text-secondary)]">
-                Unlocks at <span className="text-[var(--color-violet)]">Lv {lvl}</span>
-              </p>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-4 flex items-center gap-3 border-2 border-[var(--color-violet)]/30 bg-[var(--color-violet-soft)] p-3 shadow-[3px_3px_0_var(--pixel-ink)]">
-          <PixelSprite sprite="treasureMap" scale={2} className="animate-pixel-bob" />
-          <p className="text-sm text-[var(--color-text-secondary)]">
-            <span className="font-pixel text-[var(--color-violet)]">Hint:</span> more quests unlock as you progress through
-            courses and challenges — finish today's to reveal what's next.
-          </p>
-        </div>
-      </section>
     </div>
   )
 }

@@ -6,9 +6,10 @@ import { Badge } from '@/components/ui/Badge'
 import { Button, buttonVariants } from '@/components/ui/Button'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { NewDuelDialog } from './NewDuelDialog'
-import { getProblemBySlug } from '@/mock/problems'
-import { findPlayer } from '@/mock/players'
-import { DUEL_WIN_BONUS, formatDuration, useSocialStore, useSocialSync, type Duel } from '@/stores/socialStore'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '@/services/api'
+import { errorMessage } from '@/services/api/client'
+import { DUEL_WIN_BONUS, formatDuration, useFindPlayer, useSocialStore, useSocialSync, type Duel } from '@/stores/socialStore'
 import { useWalletStore } from '@/stores/walletStore'
 import { cn } from '@/utils/cn'
 
@@ -25,9 +26,25 @@ function DuelRow({ duel }: { duel: Duel }) {
   const declineDuel = useSocialStore((s) => s.declineDuel)
   const cancelDuel = useSocialStore((s) => s.cancelDuel)
   const xp = useWalletStore((s) => s.xp)
-  const friend = findPlayer(duel.friendId)
-  const problem = getProblemBySlug(duel.problemSlug)
+  const findPlayer = useFindPlayer()
+  const { data: problems = [] } = useQuery({ queryKey: ['problems'], queryFn: api.getProblems })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const friend = duel.friend ?? findPlayer(duel.friendId)
+  const problem = problems.find((p) => p.slug === duel.problemSlug)
   if (!friend || !problem) return null
+
+  const act = (action: (id: string) => Promise<unknown>) => async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await action(duel.id)
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const incoming = duel.direction === 'received' && duel.status === 'pending'
   const waiting = duel.direction === 'sent' && duel.status === 'pending'
@@ -63,10 +80,10 @@ function DuelRow({ duel }: { duel: Duel }) {
 
       {incoming && (
         <div className="flex gap-1.5">
-          <Button size="sm" variant="pixelViolet" disabled={xp < duel.stake} onClick={() => acceptDuel(duel.id)} title={xp < duel.stake ? `Needs ${duel.stake} XP` : undefined}>
+          <Button size="sm" variant="pixelViolet" disabled={busy || xp < duel.stake} onClick={act(acceptDuel)} title={xp < duel.stake ? `Needs ${duel.stake} XP` : undefined}>
             Accept{duel.stake ? ` · ${duel.stake} XP` : ''}
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => declineDuel(duel.id)}>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={act(declineDuel)}>
             Decline
           </Button>
         </div>
@@ -74,15 +91,25 @@ function DuelRow({ duel }: { duel: Duel }) {
       {waiting && (
         <div className="flex items-center gap-2">
           <span className="font-pixel text-xs text-[var(--color-text-muted)]">Waiting for {friend.username.split(' ')[0]}…</span>
-          <Button size="sm" variant="ghost" onClick={() => cancelDuel(duel.id)}>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={act(cancelDuel)}>
             Cancel
           </Button>
         </div>
       )}
-      {active && (
+      {active && duel.mySeconds !== undefined && (
+        <span className="font-pixel text-xs text-[var(--color-text-muted)]">
+          Your time is in · waiting for {friend.username.split(' ')[0]}…
+        </span>
+      )}
+      {active && duel.mySeconds === undefined && (
         <Link to={`/practice/${duel.problemSlug}?duel=${duel.id}`} className={buttonVariants({ variant: 'pixel', size: 'sm' })}>
           <Swords className="h-3.5 w-3.5" /> {duel.startedAt ? 'Resume duel' : 'Start duel'}
         </Link>
+      )}
+      {error && (
+        <p role="alert" className="w-full text-xs text-[var(--color-error)]">
+          {error}
+        </p>
       )}
       {result && (
         <div className="flex items-center gap-2">

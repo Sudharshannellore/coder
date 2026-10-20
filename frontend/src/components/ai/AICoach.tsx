@@ -6,37 +6,33 @@ import { QuestAIAvatar } from '@/components/illustrations/QuestAIAvatar'
 import { NotEnoughXp, XpBalance } from '@/components/economy/EconomyBits'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { matchSuggestions } from '@/services/questAi'
+import { errorMessage } from '@/services/api/client'
 import { AI_ANSWER_COST, useWalletStore } from '@/stores/walletStore'
 import { cn } from '@/utils/cn'
 
 interface AICoachProps {
   messages: AIMessageType[]
-  /** Called with the learner's question after the XP is charged; the page appends the reply. */
-  onAsk?: (question: string) => void
+  /** Asks Quest AI on the server (which charges the XP); the page appends the question and the reply. */
+  onAsk?: (question: string) => Promise<void> | void
   /** Questions related to the current problem or lesson, most useful first. */
   suggestions?: string[]
   className?: string
 }
 
-const TYPING_MS = 900
 const MAX_LENGTH = 300
 
 export function AICoach({ messages, onAsk, suggestions = [], className }: AICoachProps) {
-  // After a question, hold back AI replies that arrive from that point on and show a brief typing indicator.
-  const [holdFrom, setHoldFrom] = useState<number | null>(null)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [asked, setAsked] = useState<string[]>([])
-  const timer = useRef<number | undefined>(undefined)
   const scroller = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
 
-  useEffect(() => () => window.clearTimeout(timer.current), [])
-
   const xp = useWalletStore((s) => s.xp)
-  const spendXp = useWalletStore((s) => s.spendXp)
 
-  const visible = holdFrom === null ? messages : messages.filter((m, i) => i < holdFrom || m.role !== 'ai')
-  const typing = holdFrom !== null
+  const visible = messages
+  const typing = pending
 
   useEffect(() => {
     const el = scroller.current
@@ -56,20 +52,26 @@ export function AICoach({ messages, onAsk, suggestions = [], className }: AICoac
     return input.trim() ? matchSuggestions(fresh, input, 3) : fresh.slice(0, 3)
   }, [suggestions, asked, input])
 
-  const ask = (question: string) => {
+  const ask = async (question: string) => {
     const q = question.trim()
-    if (!q || typing || !spendXp(AI_ANSWER_COST)) return
-    setHoldFrom(messages.length)
-    window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => setHoldFrom(null), TYPING_MS)
+    if (!q || pending || xp < AI_ANSWER_COST) return
+    setPending(true)
+    setError(null)
     setAsked((a) => [...a, q])
     setInput('')
-    onAsk?.(q)
+    try {
+      await onAsk?.(q)
+    } catch (e) {
+      setError(errorMessage(e))
+      setInput(q)
+    } finally {
+      setPending(false)
+    }
   }
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    ask(input)
+    void ask(input)
   }
 
   return (
@@ -112,7 +114,7 @@ export function AICoach({ messages, onAsk, suggestions = [], className }: AICoac
                     <li key={q}>
                       <button
                         type="button"
-                        onClick={() => ask(q)}
+                        onClick={() => void ask(q)}
                         disabled={typing}
                         className="group flex w-full items-center gap-2 border-2 border-[var(--color-border-strong)] bg-[var(--color-surface-elevated)] px-2.5 py-1.5 text-left text-[13px] text-[var(--color-text-primary)] transition-[border-color,color,transform] duration-75 hover:-translate-y-0.5 hover:border-[var(--color-violet)] hover:text-[var(--color-violet)] disabled:opacity-50 disabled:hover:translate-y-0"
                       >
@@ -125,6 +127,11 @@ export function AICoach({ messages, onAsk, suggestions = [], className }: AICoac
               </div>
             )}
 
+            {error && (
+              <p role="alert" className="mb-2 text-xs text-[var(--color-error)]">
+                {error}
+              </p>
+            )}
             <form onSubmit={submit} className="flex items-end gap-2 border-2 border-[var(--color-border-strong)] bg-[var(--color-bg)] p-1.5 focus-within:border-[var(--color-violet)]">
               <textarea
                 ref={field}
@@ -135,7 +142,7 @@ export function AICoach({ messages, onAsk, suggestions = [], className }: AICoac
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()
-                    ask(input)
+                    void ask(input)
                   }
                 }}
                 aria-label="Ask Quest AI a question"

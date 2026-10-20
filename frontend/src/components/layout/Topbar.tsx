@@ -1,29 +1,36 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { LevelBadge } from '@/components/gamification/LevelBadge'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { AI_ANSWER_COST, useWalletStore } from '@/stores/walletStore'
-import { currentUser } from '@/mock/user'
+import { useAuthStore } from '@/stores/authStore'
 
 export function Topbar() {
   const xp = useWalletStore((s) => s.xp)
+  const user = useAuthStore((s) => s.user)
+  const streakDays = user?.streakDays ?? 0
+  const [greeting] = useState(() => {
+    const hour = new Date().getHours()
+    return hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
+  })
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b-2 border-[var(--pixel-ink)] bg-[var(--color-bg)]/85 px-4 backdrop-blur lg:px-6">
       <Link to="/dashboard" className="flex items-center gap-2 lg:hidden">
         <PixelSprite sprite="questBot" scale={2} />
-        <span className="hidden font-pixel text-lg sm:inline">CodeQuest</span>
+        <span className="hidden font-pixel text-lg sm:inline">Logicraft</span>
       </Link>
       <div className="hidden font-pixel text-sm text-[var(--color-text-secondary)] lg:block">
-        {'> '}Good morning, <span className="text-[var(--color-text-primary)]">Developer</span>
+        {'> '}{greeting}, <span className="text-[var(--color-text-primary)]">{user?.username.split(' ')[0] ?? 'Developer'}</span>
         <span className="animate-caret">_</span>
       </div>
       <div className="flex items-center gap-2 sm:gap-3">
         <div
           className="hidden items-center gap-1.5 border-2 border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 px-2.5 py-1 sm:flex"
-          title={`${currentUser.streakDays}-day streak`}
+          title={`${streakDays}-day streak`}
         >
           <PixelSprite sprite="flame" scale={1.5} fps={6} />
-          <span className="font-pixel text-sm text-[var(--color-warning)]">{currentUser.streakDays}</span>
+          <span className="font-pixel text-sm text-[var(--color-warning)]">{streakDays}</span>
         </div>
         <Link
           to="/subscription"
@@ -35,7 +42,7 @@ export function Topbar() {
           <span aria-hidden className="flex h-5 w-5 items-center justify-center bg-[var(--color-accent)] font-pixel text-sm leading-none text-[#06120a] transition-transform group-hover:scale-110">+</span>
           <span className="sr-only">Get more XP</span>
         </Link>
-        <LevelBadge level={currentUser.level} />
+        {user && <LevelBadge level={user.level} />}
         <Link
           to="/profile"
           aria-label="Your profile"

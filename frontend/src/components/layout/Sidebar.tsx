@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { NavLink, Link } from 'react-router-dom'
+import { NavLink, Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { ChevronsLeft, ChevronsRight, LogOut } from 'lucide-react'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { PixelBar } from '@/components/pixel/PixelBar'
 import type { SpriteName } from '@/components/pixel/sprites'
 import { useSidebarStore } from '@/stores/sidebarStore'
-import { currentUser } from '@/mock/user'
+import { useAuthStore } from '@/stores/authStore'
+import { signOut } from '@/services/auth'
 import { useWalletStore } from '@/stores/walletStore'
 import { cn } from '@/utils/cn'
 
@@ -115,7 +116,9 @@ function isEditable(target: EventTarget | null) {
 export function Sidebar() {
   const { collapsed, toggle } = useSidebarStore()
   const lifetimeXp = useWalletStore((s) => s.lifetimeXp)
-  const xpPercent = (lifetimeXp / currentUser.xpToNextLevel) * 100
+  const currentUser = useAuthStore((s) => s.user)
+  const navigate = useNavigate()
+  const xpPercent = currentUser ? (lifetimeXp / currentUser.xpToNextLevel) * 100 : 0
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -127,6 +130,8 @@ export function Sidebar() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [toggle])
+
+  if (!currentUser) return null // only rendered inside RequireAuth, so this is momentary at most
 
   return (
     <aside
@@ -150,9 +155,9 @@ export function Sidebar() {
         </span>
       </button>
 
-      <Link to="/" className={cn('flex h-16 shrink-0 items-center gap-2.5', collapsed ? 'justify-center' : 'px-5')} aria-label="CodeQuest home">
+      <Link to="/" className={cn('flex h-16 shrink-0 items-center gap-2.5', collapsed ? 'justify-center' : 'px-5')} aria-label="Logicraft home">
         <PixelSprite sprite="questBot" scale={2} fps={3} />
-        <span className={cn('whitespace-nowrap font-pixel text-xl', collapsed && 'sr-only')}>CodeQuest</span>
+        <span className={cn('whitespace-nowrap font-pixel text-xl', collapsed && 'sr-only')}>Logicraft</span>
       </Link>
 
       {collapsed ? (
@@ -209,6 +214,15 @@ export function Sidebar() {
               >
                 <PixelSprite sprite="gear" scale={2} className="group-hover:animate-gear-spin" />
               </NavLink>
+              <button
+                type="button"
+                onClick={() => void signOut().then(() => navigate('/signin', { replace: true }))}
+                aria-label="Sign out"
+                title="Sign out"
+                className="flex h-9 w-9 shrink-0 items-center justify-center border-2 border-[var(--color-border-strong)] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-error)] hover:text-[var(--color-error)]"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
             </div>
             <PixelBar percent={xpPercent} segments={10} size="sm" className="mt-2" label="Experience" />
           </div>

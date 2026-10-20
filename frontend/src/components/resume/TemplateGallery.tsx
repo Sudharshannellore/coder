@@ -3,7 +3,7 @@ import type { ResumeData, ResumeTemplateId } from '@/types'
 import { Badge } from '@/components/ui/Badge'
 import { XpPurchaseButton } from '@/components/economy/XpPurchaseButton'
 import { ScaledResume } from './ScaledResume'
-import { resumeTemplates } from '@/mock/resumeTemplates'
+import { useResumeTemplates } from './templates'
 import { useResumeStore } from '@/stores/resumeStore'
 import { cn } from '@/utils/cn'
 
@@ -16,6 +16,7 @@ interface TemplateGalleryProps {
 
 /** Template picker: free templates apply instantly; premium ones can be previewed, then unlocked once with XP. */
 export function TemplateGallery({ data, activeTemplate, previewTemplate, onPreview }: TemplateGalleryProps) {
+  const resumeTemplates = useResumeTemplates()
   const unlocked = useResumeStore((s) => s.unlockedTemplates)
   const setTemplate = useResumeStore((s) => s.setTemplate)
   const unlockTemplate = useResumeStore((s) => s.unlockTemplate)
@@ -28,7 +29,7 @@ export function TemplateGallery({ data, activeTemplate, previewTemplate, onPrevi
   return (
     <div className="space-y-4">
       <p className="text-sm text-[var(--color-text-secondary)]">
-        All {resumeTemplates.length} templates are text-only and ATS-friendly — no graphics or colour blocks to confuse resume scanners. Classic and Minimal are free; unlock any other once with XP and use it on all of your resumes.
+        All {resumeTemplates.length} templates are text-only and ATS-friendly — no graphics or colour blocks to confuse resume scanners. Some are free; unlock any other once with XP and use it on all of your resumes.
       </p>
       <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
         {resumeTemplates.map((t) => {
@@ -87,8 +88,8 @@ export function TemplateGallery({ data, activeTemplate, previewTemplate, onPrevi
                     <XpPurchaseButton
                       size="sm"
                       cost={t.cost}
-                      onPurchase={() => {
-                        const ok = unlockTemplate(t.id)
+                      onPurchase={async () => {
+                        const ok = await unlockTemplate(t.id)
                         if (ok) use(t.id)
                         return ok
                       }}

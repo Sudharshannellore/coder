@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* CodeQuest is dark-only by design. */
+/* Logicraft is dark-only by design. */
 :root {
   --color-bg: #08090b;
   --color-surface: #111318;

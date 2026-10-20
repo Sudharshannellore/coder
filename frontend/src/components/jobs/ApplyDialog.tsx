@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { AlertTriangle, ArrowLeft, ArrowRight, Check, Plus, X } from 'lucide-react'
-import type { Job, ResumeData } from '@/types'
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Plus, X } from 'lucide-react'
+import type { Job, ResumeData, TailorResult } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Confetti } from '@/components/ui/Confetti'
 import { PixelBar } from '@/components/pixel/PixelBar'
@@ -12,15 +12,16 @@ import { XpBalance } from '@/components/economy/EconomyBits'
 import { AiButton } from '@/components/resume/AiButton'
 import { ScaledResume } from '@/components/resume/ScaledResume'
 import { JobLogo } from './JobLogo'
-import { jobText } from '@/mock/jobs'
-import { getTemplate } from '@/mock/resumeTemplates'
-import { applyTailoring, JOB_APPLY_COST, matchJob, RESUME_AI_COST, tailorToJob, writeCoverNote, type TailorResult } from '@/services/resumeAi'
+import { templateName, useResumeTemplates } from '@/components/resume/templates'
+import { api } from '@/services/api'
+import { errorMessage } from '@/services/api/client'
+import { applyTailoring, jobText, matchJob, RESUME_AI_COST } from '@/services/resumeAi'
 import { useResumeStore } from '@/stores/resumeStore'
 import { useApplicationsStore } from '@/stores/applicationsStore'
 import { useWalletStore } from '@/stores/walletStore'
 import { cn } from '@/utils/cn'
 
-const STEPS = ['Resume', 'Cover note', 'Review & submit'] as const
+const STEPS = ['Resume', 'Cover note', 'Apply'] as const
 
 const PLACEHOLDER = /\[[^\]]+\]/g
 
@@ -58,14 +59,20 @@ interface ApplyDialogProps {
   onViewApplications: () => void
 }
 
-/** Three-step apply flow: optionally tailor the resume (XP), optionally write a cover note (XP), then submit (XP). */
+/**
+ * Three-step flow: optionally tailor the resume (XP), optionally write a cover note (XP), then apply on the job
+ * board's own page. The application is tracked under My applications (free).
+ */
 export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogProps) {
+  const templates = useResumeTemplates()
   const resumes = useResumeStore((s) => s.resumes)
   const activeId = useResumeStore((s) => s.activeId)
   const updateResume = useResumeStore((s) => s.updateById)
-  const addApplication = useApplicationsStore((s) => s.add)
-  const xp = useWalletStore((s) => s.xp)
-  const spendXp = useWalletStore((s) => s.spendXp)
+  const track = useApplicationsStore((s) => s.track)
+  const setBalance = useWalletStore((s) => s.setBalance)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   // Tailoring changes only this application's copy of the chosen resume.
   const [chosenId, setChosenId] = useState(activeId)
@@ -92,7 +99,6 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
 
   const liveMatch = tailor ? matchJob(resume, description) : null
   const placeholders = countPlaceholders(resume, coverNote)
-  const canAfford = xp >= JOB_APPLY_COST
 
   const requestClose = () => {
     if (aiSpent > 0 && !done) setConfirmClose(true)
@@ -116,20 +122,28 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  const submit = () => {
-    if (!spendXp(JOB_APPLY_COST)) return
-    addApplication({
-      jobId: job.id,
-      resume,
-      templateId: chosen.templateId,
-      resumeTitle: chosen.title,
-      coverNote: coverNote.trim(),
-      tailored: !!tailor,
-      matchScore: liveMatch?.score ?? null,
-      xpSpent: aiSpent + JOB_APPLY_COST,
-    })
-    if (saveToMain && tailor) updateResume(chosen.id, () => resume)
-    setDone(true)
+  const submit = async () => {
+    // Opened right away (inside the click) so the browser doesn't block it; the boards' terms ask that
+    // every Apply goes to their own link.
+    window.open(job.applyUrl, '_blank', 'noopener')
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      await track(job.id, {
+        resumeId: chosen.id,
+        // The tailored copy is this application's own; otherwise the saved resume as it is.
+        resume: tailor ? resume : undefined,
+        coverNote: coverNote.trim(),
+        tailored: !!tailor,
+        aiXpSpent: aiSpent,
+      })
+      if (saveToMain && tailor) updateResume(chosen.id, () => resume)
+      setDone(true)
+    } catch (e) {
+      setSubmitError(errorMessage(e))
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const preview = (
@@ -156,7 +170,7 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
         className="flex h-full w-full max-w-6xl flex-col border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[6px_6px_0_var(--pixel-ink)] outline-none sm:h-[min(92dvh,920px)]"
       >
         <header className="flex items-center gap-3 border-b-2 border-[var(--color-border)] px-4 py-3 sm:px-6">
-          <JobLogo job={job} size="sm" />
+          <JobLogo logo={job.logo} size="sm" />
           <div className="min-w-0 flex-1">
             <p className="truncate font-pixel text-base sm:text-lg">{job.role}</p>
             <p className="truncate text-xs text-[var(--color-text-secondary)]">
@@ -173,11 +187,14 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
           <div className="relative flex flex-1 flex-col items-center justify-center gap-4 overflow-hidden px-6 text-center">
             <Confetti fire count={36} />
             <PixelSprite sprite="chestOpened" scale={6} className="animate-pixel-bob" />
-            <h2 className="text-2xl sm:text-3xl">Application sent!</h2>
+            <h2 className="text-2xl sm:text-3xl">Finish on {job.source}</h2>
             <p className="max-w-md text-sm text-[var(--color-text-secondary)]">
-              Your {tailor ? 'tailored ' : ''}resume{coverNote.trim() ? ' and cover note are' : ' is'} on the way to {job.company}. This application cost{' '}
-              <span className="font-pixel text-[var(--color-accent)]">{aiSpent + JOB_APPLY_COST} XP</span>.
+              {job.source} opened in a new tab: complete your application to {job.company} there. It's saved under My applications with the{' '}
+              {tailor ? 'tailored ' : ''}resume{coverNote.trim() ? ' and cover note' : ''} you prepared, so you can update its status as you hear back.
             </p>
+            <a href={job.applyUrl} target="_blank" rel="noopener" className="text-sm text-[var(--color-accent)] hover:underline">
+              Tab didn't open? Go to the application <ExternalLink className="inline h-3.5 w-3.5" />
+            </a>
             {saveToMain && tailor && <p className="text-xs text-[var(--color-violet)]">The tailored changes were also saved to “{chosen.title}”.</p>}
             <div className="mt-2 flex flex-wrap justify-center gap-3">
               <Button variant="pixelViolet" onClick={onViewApplications}>
@@ -228,7 +245,7 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
                     <div>
                       <h2 className="text-xl">Your resume for this job</h2>
                       <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                        We'll send your resume from the{' '}
+                        Get the resume you'll send from the{' '}
                         <Link to="/resume" className="text-[var(--color-accent)] hover:underline">
                           Resume Builder
                         </Link>
@@ -238,7 +255,7 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
 
                     {resumes.length > 1 && (
                       <label className="block">
-                        <span className="mb-1 block font-pixel text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">Resume to send</span>
+                        <span className="mb-1 block font-pixel text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">Resume to use</span>
                         <select
                           value={chosen.id}
                           disabled={!!tailor}
@@ -247,7 +264,7 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
                         >
                           {resumes.map((r) => (
                             <option key={r.id} value={r.id}>
-                              {r.title} · {getTemplate(r.templateId).name} template
+                              {r.title} · {templateName(templates, r.templateId)} template
                             </option>
                           ))}
                         </select>
@@ -273,8 +290,10 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
                           <AiButton
                             label="Tailor & match"
                             cost={RESUME_AI_COST.tailor}
-                            onRun={() => {
-                              setTailor(tailorToJob(base, description, job))
+                            onRun={async () => {
+                              const { result, balance } = await api.tailorResume(base, { jobId: job.id })
+                              setBalance(balance)
+                              setTailor(result)
                               setAiSpent((s) => s + RESUME_AI_COST.tailor)
                             }}
                           />
@@ -350,7 +369,7 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
                                 Use this summary in this application
                               </CheckRow>
                               <CheckRow checked={saveToMain} onChange={setSaveToMain}>
-                                Also save these changes to “{chosen.title}” when I submit
+                                Also save these changes to “{chosen.title}” (so you can download it as a PDF)
                               </CheckRow>
                             </div>
                           </div>
@@ -358,7 +377,7 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
                       )}
                     </section>
 
-                    {!tailor && <p className="text-xs text-[var(--color-text-muted)]">Not now? Skip ahead — your resume goes out as it is.</p>}
+                    {!tailor && <p className="text-xs text-[var(--color-text-muted)]">Not now? Skip ahead and use your resume as it is.</p>}
 
                     <details className="lg:hidden">
                       <summary className="cursor-pointer font-pixel text-sm text-[var(--color-accent)]">Preview the resume</summary>
@@ -377,8 +396,10 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
                       <AiButton
                         label={coverNote.trim() ? 'Rewrite with AI' : 'Write cover note'}
                         cost={RESUME_AI_COST.coverNote}
-                        onRun={() => {
-                          setCoverNote(writeCoverNote(resume, job, description))
+                        onRun={async () => {
+                          const { text, balance } = await api.writeCoverNote(resume, job.id)
+                          setBalance(balance)
+                          setCoverNote(text)
                           setAiSpent((s) => s + RESUME_AI_COST.coverNote)
                         }}
                       />
@@ -392,7 +413,7 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
                       className="w-full resize-y border-2 border-[var(--color-border-strong)] bg-[var(--color-bg)] px-3 py-2.5 text-sm leading-relaxed text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-violet)]"
                     />
                     <p className="flex flex-wrap justify-between gap-2 text-xs text-[var(--color-text-muted)]">
-                      <span>Quest AI leaves [brackets] for things only you know — replace them before you submit.</span>
+                      <span>Quest AI leaves [brackets] for things only you know — replace them before you apply.</span>
                       <span>{coverNote.trim() ? coverNote.trim().split(/\s+/).length : 0} words</span>
                     </p>
                   </>
@@ -400,7 +421,7 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
 
                 {step === 2 && (
                   <>
-                    <h2 className="text-xl">Review & submit</h2>
+                    <h2 className="text-xl">Apply on {job.source}</h2>
                     <dl className="divide-y-2 divide-[var(--color-border)] border-2 border-[var(--color-border)]">
                       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
                         <dt className="font-pixel text-sm text-[var(--color-text-secondary)]">Resume</dt>
@@ -410,13 +431,34 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
                               Tailored for {job.company} · <span className="font-pixel text-[var(--color-success)]">{liveMatch.score}% match</span>
                             </span>
                           ) : (
-                            <span className="text-[var(--color-text-secondary)]">Sent as it is — not checked against this job</span>
+                            <span className="text-[var(--color-text-secondary)]">As it is — not checked against this job</span>
                           )}
                         </dd>
                       </div>
                       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
                         <dt className="font-pixel text-sm text-[var(--color-text-secondary)]">Cover note</dt>
-                        <dd className="text-sm">{coverNote.trim() ? `${coverNote.trim().split(/\s+/).length} words` : <span className="text-[var(--color-text-secondary)]">None</span>}</dd>
+                        <dd className="flex items-center gap-2 text-sm">
+                          {coverNote.trim() ? (
+                            <>
+                              {coverNote.trim().split(/\s+/).length} words
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  void navigator.clipboard?.writeText(coverNote.trim()).then(() => setCopied(true))
+                                }}
+                              >
+                                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />} {copied ? 'Copied' : 'Copy'}
+                              </Button>
+                            </>
+                          ) : (
+                            <span className="text-[var(--color-text-secondary)]">None</span>
+                          )}
+                        </dd>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                        <dt className="font-pixel text-sm text-[var(--color-text-secondary)]">Quest AI help</dt>
+                        <dd className="text-sm">{aiSpent ? `${aiSpent} XP (already paid)` : 'None'} · applying is free</dd>
                       </div>
                     </dl>
 
@@ -435,40 +477,22 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
                           <Link to="/resume" className="text-[var(--color-accent)] hover:underline">
                             Resume Builder
                           </Link>{' '}
-                          before submitting.
+                          before applying.
                         </p>
                       </div>
                     )}
 
-                    <div className="border-2 border-[var(--color-border-strong)] bg-[var(--color-bg)] p-4 font-pixel text-sm">
-                      <p className="mb-3 flex items-center gap-2 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
-                        <PixelSprite sprite="star" scale={1} /> XP receipt
-                      </p>
-                      <div className="space-y-1.5">
-                        <p className="flex justify-between text-[var(--color-text-secondary)]">
-                          <span>Quest AI help (already paid)</span>
-                          <span>{aiSpent} XP</span>
-                        </p>
-                        <p className="flex justify-between">
-                          <span>Application fee</span>
-                          <span className="text-[var(--color-accent)]">{JOB_APPLY_COST} XP</span>
-                        </p>
-                        <p className="flex justify-between border-t-2 border-dashed border-[var(--color-border-strong)] pt-1.5 text-[var(--color-text-secondary)]">
-                          <span>Balance after submitting</span>
-                          <span className={canAfford ? '' : 'text-[var(--color-error)]'}>{canAfford ? `${(xp - JOB_APPLY_COST).toLocaleString()} XP` : `${JOB_APPLY_COST - xp} XP short`}</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    {!canAfford && (
-                      <p className="text-sm text-[var(--color-warning)]">
-                        You need {JOB_APPLY_COST} XP to apply.{' '}
-                        <Link to="/practice" className="text-[var(--color-accent)] hover:underline">
-                          Solve a problem
-                        </Link>{' '}
-                        to earn more.
-                      </p>
-                    )}
+                    <ol className="list-decimal space-y-1.5 border-2 border-[var(--color-border-strong)] bg-[var(--color-bg)] p-4 pl-8 text-sm text-[var(--color-text-secondary)]">
+                      <li>
+                        Get your resume as a PDF with <span className="font-pixel">Download PDF</span> in the{' '}
+                        <Link to="/resume" className="text-[var(--color-accent)] hover:underline">
+                          Resume Builder
+                        </Link>
+                        {tailor ? (saveToMain ? ' (the tailored changes are saved there when you apply).' : '. Tick "Also save these changes" in step 1 to include the tailoring.') : '.'}
+                      </li>
+                      {coverNote.trim() && <li>Copy your cover note.</li>}
+                      <li>Apply on this job's page on {job.source}. Logicraft doesn't send anything to {job.company}; it keeps a record under My applications.</li>
+                    </ol>
 
                     <details className="lg:hidden">
                       <summary className="cursor-pointer font-pixel text-sm text-[var(--color-accent)]">Preview the resume</summary>
@@ -510,9 +534,16 @@ export function ApplyDialog({ job, onClose, onViewApplications }: ApplyDialogPro
                       {step === 0 && !tailor ? 'Skip & continue' : step === 1 && !coverNote.trim() ? 'Skip cover note' : 'Continue'} <ArrowRight className="h-4 w-4" />
                     </Button>
                   ) : (
-                    <Button variant="pixel" onClick={submit} disabled={!canAfford}>
-                      Submit application · {JOB_APPLY_COST} XP
-                    </Button>
+                    <div className="flex flex-col items-end gap-1">
+                      <Button variant="pixel" onClick={submit} disabled={submitting}>
+                        <ExternalLink className="h-4 w-4" /> {submitting ? 'Opening…' : `Apply on ${job.source}`}
+                      </Button>
+                      {submitError && (
+                        <span role="alert" className="text-xs text-[var(--color-error)]">
+                          {submitError}
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

@@ -2,16 +2,24 @@ import { useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { PixelBar } from '@/components/pixel/PixelBar'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
+import type { SpriteName } from '@/components/pixel/sprites'
 import { cn } from '@/utils/cn'
 
 interface BossArenaProps {
   name: string
-  secondsLeft: number
+  sprite?: SpriteName
+  /** A line under the boss, e.g. its taunt or the challenge. */
+  caption?: string
+  /** Under the hero, e.g. "YOU · LV 7". */
+  playerLabel?: string
+  /** Seconds on the clock; null shows the time limit instead (the fight hasn't started). */
+  secondsLeft: number | null
+  timeLimitMinutes: number
   rewardXp: number
   hpPercent: number
 }
 
-function formatTime(totalSeconds: number) {
+export function formatClock(totalSeconds: number) {
   const m = Math.floor(totalSeconds / 60)
   const s = totalSeconds % 60
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
@@ -21,7 +29,7 @@ const STARS = [
   [6, 12], [18, 30], [27, 8], [41, 22], [55, 6], [63, 34], [72, 14], [84, 26], [93, 10], [12, 48], [88, 50], [48, 44],
 ]
 
-export function BossArena({ name, secondsLeft, rewardXp, hpPercent }: BossArenaProps) {
+export function BossArena({ name, sprite = 'recursionBoss', caption, playerLabel = 'YOU', secondsLeft, timeLimitMinutes, rewardXp, hpPercent }: BossArenaProps) {
   const [hits, setHits] = useState<{ id: number; x: number }[]>([])
   const [shaking, setShaking] = useState(false)
   const nextId = useRef(0)
@@ -34,7 +42,7 @@ export function BossArena({ name, secondsLeft, rewardXp, hpPercent }: BossArenaP
     window.setTimeout(() => setHits((h) => h.filter((hit) => hit.id !== id)), 900)
   }
 
-  const lowTime = secondsLeft < 60
+  const lowTime = secondsLeft !== null && secondsLeft < 60
 
   return (
     <section
@@ -60,12 +68,12 @@ export function BossArena({ name, secondsLeft, rewardXp, hpPercent }: BossArenaP
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           <div className="border-2 border-[var(--color-border-strong)] bg-black/50 px-4 py-2">
-            <p className="font-pixel text-xs uppercase text-[var(--color-text-muted)]">Time left</p>
+            <p className="font-pixel text-xs uppercase text-[var(--color-text-muted)]">{secondsLeft === null ? 'Time limit' : 'Time left'}</p>
             <p
               className={cn('font-pixel text-3xl tabular-nums', lowTime ? 'animate-pixel-twinkle text-[var(--color-error)]' : 'text-[var(--color-text-primary)]')}
               aria-live={lowTime ? 'polite' : 'off'}
             >
-              {formatTime(secondsLeft)}
+              {secondsLeft === null ? formatClock(timeLimitMinutes * 60) : formatClock(secondsLeft)}
             </p>
           </div>
           <div className="flex items-center gap-2 border-2 border-[var(--color-accent)]/40 bg-[var(--color-accent-soft)] px-4 py-3">
@@ -78,13 +86,13 @@ export function BossArena({ name, secondsLeft, rewardXp, hpPercent }: BossArenaP
       {/* Arena floor */}
       <div className="relative mt-6 grid grid-cols-[1fr_auto_1fr] items-end gap-2 px-4 sm:px-10">
         <div className="flex flex-col items-center gap-2 pb-0">
-          <div className="flex gap-1" aria-label="3 lives remaining">
+          <div className="flex gap-1" aria-hidden>
             {[0, 1, 2].map((i) => (
               <PixelSprite key={i} sprite="heart" scale={2} />
             ))}
           </div>
           <PixelSprite sprite="hero" scale={5} fps={2} className="animate-pixel-bob" />
-          <p className="font-pixel text-sm text-[var(--color-violet)]">YOU · LV 18</p>
+          <p className="font-pixel text-sm text-[var(--color-violet)]">{playerLabel}</p>
         </div>
 
         <p className="mb-16 font-pixel text-3xl text-[var(--color-warning)] [text-shadow:3px_3px_0_var(--pixel-ink)] sm:text-5xl">VS</p>
@@ -118,13 +126,13 @@ export function BossArena({ name, secondsLeft, rewardXp, hpPercent }: BossArenaP
               ))}
             </AnimatePresence>
             <PixelSprite
-              sprite="recursionBoss"
-              scale={6}
+              sprite={sprite}
+              scale={sprite === 'recursionBoss' ? 6 : 8}
               fps={3}
               className={cn(shaking ? 'animate-pixel-shake' : 'animate-pixel-hover')}
             />
           </button>
-          <p className="font-pixel text-sm text-[var(--color-error)]">f(n) = f(n - 1) ...</p>
+          {caption && <p className="max-w-[260px] text-center font-pixel text-sm text-[var(--color-error)]">{caption}</p>}
         </div>
       </div>
 

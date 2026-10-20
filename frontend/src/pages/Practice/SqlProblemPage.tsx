@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft } from 'lucide-react'
 import { api } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/Card'
@@ -12,7 +12,6 @@ import { PixelBackdrop } from '@/components/pixel/PixelBackdrop'
 import { SqlBoard } from '@/components/sql/SqlBoard'
 import { VictoryOverlay } from '@/components/gamification/VictoryOverlay'
 import { RichText } from '@/components/ui/RichText'
-import { useWalletStore } from '@/stores/walletStore'
 import { monsters } from './monsters'
 
 export default function SqlProblemPage() {
@@ -22,7 +21,7 @@ export default function SqlProblemPage() {
   const [hintsShown, setHintsShown] = useState(0)
   const [victoryOpen, setVictoryOpen] = useState(false)
   const [awardedXp, setAwardedXp] = useState(0)
-  const rewardOnce = useWalletStore((s) => s.rewardOnce)
+  const queryClient = useQueryClient()
 
   if (isLoading || !tables) return <PageLoader />
 
@@ -114,8 +113,10 @@ export default function SqlProblemPage() {
           </CardContent>
         </Card>
 
-        <SqlBoard key={problem.id} tables={tables} problem={problem} onSolved={() => {
-            setAwardedXp(rewardOnce(`sql:${problem.slug}`, problem.xp))
+        <SqlBoard key={problem.id} tables={tables} problem={problem} onSolved={(awarded) => {
+            setAwardedXp(awarded)
+            void queryClient.invalidateQueries({ queryKey: ['sql-problems'] })
+            void queryClient.invalidateQueries({ queryKey: ['daily-quest'] })
             setVictoryOpen(true)
           }} />
       </div>

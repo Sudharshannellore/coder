@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Problem } from '@/types'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
-import { RichText } from '@/components/ui/RichText'
+import { Markdown } from '@/components/ui/Markdown'
 import { cn } from '@/utils/cn'
 
 type Tab = 'problem' | 'hints'
@@ -61,12 +61,10 @@ export function ProblemPanel({ problem, className }: ProblemPanelProps) {
                   {tag}
                 </span>
               ))}
-              <span className="ml-auto font-pixel text-xs text-[var(--color-text-muted)]">{problem.acceptanceRate}% acceptance</span>
+              <span className="ml-auto font-pixel text-xs text-[var(--color-text-muted)]">{problem.acceptanceRate == null ? 'New problem' : `${problem.acceptanceRate}% acceptance`}</span>
             </div>
 
-            <p className="text-[15px] leading-7 text-[var(--color-text-primary)]">
-              <RichText text={problem.description} />
-            </p>
+            <Markdown text={problem.description} className="text-[15px] leading-7 text-[var(--color-text-primary)]" />
 
             <SectionLabel>Examples</SectionLabel>
             <div className="space-y-3">
@@ -88,7 +86,7 @@ export function ProblemPanel({ problem, className }: ProblemPanelProps) {
               ))}
             </div>
 
-            <SectionLabel>Constraints</SectionLabel>
+            {problem.constraints.length > 0 && <SectionLabel>Constraints</SectionLabel>}
             <ul className="space-y-2 font-mono text-[13px]">
               {problem.constraints.map((constraint, i) => (
                 <li key={i} className="flex gap-2.5">

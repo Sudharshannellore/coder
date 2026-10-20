@@ -1,4 +1,6 @@
 import { Link } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '@/services/api'
 import { motion } from 'framer-motion'
 import { ArrowRight, Check } from 'lucide-react'
 import { buttonVariants } from '@/components/ui/Button'
@@ -11,14 +13,9 @@ import { PixelWorld } from '@/components/pixel/PixelWorld'
 import type { SpriteName } from '@/components/pixel/sprites'
 import { ActivityTicker } from '@/components/landing/ActivityTicker'
 import { TreasureCTA } from '@/components/landing/TreasureCTA'
+import { useAuthStore } from '@/stores/authStore'
 import { cn } from '@/utils/cn'
 
-const stats: { sprite: SpriteName; value: number; suffix: string; label: string }[] = [
-  { sprite: 'hero', value: 54000, suffix: '+', label: 'Developers learning' },
-  { sprite: 'terminal', value: 2100000, suffix: '+', label: 'Problems solved' },
-  { sprite: 'recursionBoss', value: 320000, suffix: '+', label: 'Boss Battles cleared' },
-  { sprite: 'gem', value: 140, suffix: '+', label: 'Countries represented' },
-]
 
 const features: { sprite: SpriteName; title: string; description: string; tint: string }[] = [
   {
@@ -88,13 +85,26 @@ function SectionLabel({ children }: { children: string }) {
 }
 
 export default function Landing() {
+  const { data: platform } = useQuery({ queryKey: ['platform-stats'], queryFn: api.getStats, staleTime: 60_000 })
+  // Live counts from the server — nothing here is made up.
+  const stats: { sprite: SpriteName; value: number; label: string }[] = platform
+    ? [
+        { sprite: 'hero', value: platform.learners, label: platform.learners === 1 ? 'Learner' : 'Learners' },
+        { sprite: 'terminal', value: platform.problemsSolved, label: 'Problems solved' },
+        { sprite: 'recursionBoss', value: platform.bossesDefeated, label: 'Bosses defeated' },
+        { sprite: 'gem', value: platform.languages, label: 'Languages to learn' },
+      ]
+    : []
+  const signedIn = useAuthStore((s) => !!s.accessToken)
+  // Signed-out visitors start by creating an account; signed-in players go straight to their dashboard.
+  const start = signedIn ? '/dashboard' : '/signup'
   return (
     <div className="min-h-dvh overflow-x-hidden bg-[var(--color-bg)] text-[var(--color-text-primary)]">
       <header className="sticky top-0 z-40 border-b border-[var(--color-border)]/60 bg-[var(--color-bg)]/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
           <Link to="/" className="flex items-center gap-2.5">
             <PixelSprite sprite="questBot" scale={2} />
-            <span className="font-pixel text-xl">CodeQuest</span>
+            <span className="font-pixel text-xl">Logicraft</span>
           </Link>
           <nav className="hidden items-center gap-8 text-sm font-medium text-[var(--color-text-secondary)] md:flex">
             <a href="#features" className="hover:text-[var(--color-text-primary)]">Features</a>
@@ -102,11 +112,11 @@ export default function Landing() {
             <Link to="/leaderboard" className="hover:text-[var(--color-text-primary)]">Leaderboard</Link>
           </nav>
           <div className="flex items-center gap-4">
-            <Link to="/dashboard" className="hidden text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] sm:block">
-              Sign in
+            <Link to={signedIn ? '/dashboard' : '/signin'} className="hidden text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] sm:block">
+              {signedIn ? 'Dashboard' : 'Sign in'}
             </Link>
-            <Link to="/dashboard" className={buttonVariants({ variant: 'pixel', size: 'sm' })}>
-              Start Coding
+            <Link to={start} className={buttonVariants({ variant: 'pixel', size: 'sm' })}>
+              {signedIn ? 'Continue' : 'Start Coding'}
             </Link>
           </div>
         </div>
@@ -149,7 +159,7 @@ export default function Landing() {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="mt-10 flex flex-col gap-4 sm:flex-row [@media(max-height:760px)]:mt-6 [@media(max-height:700px)]:mt-5! [@media(max-height:700px)]:gap-3!"
           >
-            <Link to="/dashboard" className={cn(buttonVariants({ variant: 'pixel', size: 'lg' }), 'group text-lg')}>
+            <Link to={start} className={cn(buttonVariants({ variant: 'pixel', size: 'lg' }), 'group text-lg')}>
               Start Coding
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </Link>
@@ -185,7 +195,7 @@ export default function Landing() {
               <span className="h-3 w-3 bg-[var(--color-error)]" />
               <span className="h-3 w-3 bg-[var(--color-warning)]" />
               <span className="h-3 w-3 bg-[var(--color-success)]" />
-              <span className="ml-3 font-mono text-xs text-[var(--color-text-muted)]">two-sum.py — CodeQuest</span>
+              <span className="ml-3 font-mono text-xs text-[var(--color-text-muted)]">two-sum.py — Logicraft</span>
             </div>
             <div className="grid grid-cols-1 gap-px bg-[var(--color-border)] md:grid-cols-[1fr_1.2fr]">
               <div className="space-y-4 bg-[var(--color-surface)] p-6 text-left">
@@ -242,7 +252,7 @@ export default function Landing() {
                   <PixelSprite sprite={s.sprite} scale={s.sprite === 'recursionBoss' ? 2 : 3} fps={2} />
                 </div>
                 <p className="font-pixel text-2xl text-[var(--color-accent)] sm:text-3xl">
-                  <CountUp value={s.value} suffix={s.suffix} />
+                  <CountUp value={s.value} />
                 </p>
                 <p className="mt-1 text-xs text-[var(--color-text-secondary)] sm:text-sm">{s.label}</p>
               </div>
@@ -362,7 +372,7 @@ export default function Landing() {
       <TreasureCTA />
 
       <footer className="border-t-2 border-[var(--pixel-ink)] px-6 py-8 text-center font-pixel text-sm text-[var(--color-text-muted)]">
-        © {new Date().getFullYear()} CodeQuest · Press START to level up
+        © {new Date().getFullYear()} Logicraft · Press START to level up
       </footer>
     </div>
   )

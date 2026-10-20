@@ -10,7 +10,7 @@ import { PageLoader } from '@/components/layout/PageLoader'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { useWalletStore } from '@/stores/walletStore'
 import { PixelBar } from '@/components/pixel/PixelBar'
-import type { SpriteName } from '@/components/pixel/sprites'
+import { isSpriteName, type SpriteName } from '@/components/pixel/sprites'
 
 function formatDuration(totalSeconds: number) {
   const m = Math.floor(totalSeconds / 60)
@@ -30,13 +30,6 @@ const STARS: [number, number][] = [
 ]
 
 const SKILL_COLORS = ['accent', 'info', 'warning', 'violet', 'error'] as const
-
-const EQUIPPED: { sprite: SpriteName; label: string }[] = [
-  { sprite: 'medal', label: 'First Blood' },
-  { sprite: 'crown', label: 'League Royalty' },
-  { sprite: 'gem', label: 'Diamond Mind' },
-  { sprite: 'floppy', label: 'Save Scummer' },
-]
 
 function AttributeTile({ sprite, label, color, children }: { sprite: SpriteName; label: string; color: string; children: ReactNode }) {
   return (
@@ -60,6 +53,12 @@ function AttributeTile({ sprite, label, color, children }: { sprite: SpriteName;
 export default function Profile() {
   const { data: user } = useQuery({ queryKey: ['current-user'], queryFn: api.getCurrentUser })
   const lifetimeXp = useWalletStore((s) => s.lifetimeXp)
+  const { data: achievements = [] } = useQuery({ queryKey: ['achievements'], queryFn: api.getAchievements })
+  // The four most recent achievements this player has actually unlocked.
+  const badges = achievements
+    .filter((a) => a.unlocked)
+    .sort((a, b) => (b.unlockedAt ?? '').localeCompare(a.unlockedAt ?? ''))
+    .slice(0, 4)
 
   if (!user) return <PageLoader />
 
@@ -117,18 +116,22 @@ export default function Profile() {
             <XPBar xp={lifetimeXp} xpToNextLevel={user.xpToNextLevel} className="max-w-lg" />
 
             <div>
-              <p className="mb-2 font-pixel text-xs uppercase tracking-wider text-[var(--color-text-muted)]">Equipped badges</p>
-              <div className="flex flex-wrap gap-2">
-                {EQUIPPED.map(({ sprite, label }) => (
-                  <div
-                    key={sprite}
-                    title={label}
-                    className="group pixel-corners flex h-11 w-11 items-center justify-center bg-[var(--color-surface-elevated)]"
-                  >
-                    <PixelSprite sprite={sprite} scale={2} title={label} className="group-hover:animate-pixel-bob" />
-                  </div>
-                ))}
-              </div>
+              <p className="mb-2 font-pixel text-xs uppercase tracking-wider text-[var(--color-text-muted)]">Latest badges</p>
+              {badges.length === 0 ? (
+                <p className="text-sm text-[var(--color-text-muted)]">No badges yet — unlock achievements by learning, solving and keeping your streak.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {badges.map((badge) => (
+                    <div
+                      key={badge.id}
+                      title={badge.title}
+                      className="group pixel-corners flex h-11 w-11 items-center justify-center bg-[var(--color-surface-elevated)]"
+                    >
+                      <PixelSprite sprite={isSpriteName(badge.icon) ? badge.icon : 'medal'} scale={2} title={badge.title} className="group-hover:animate-pixel-bob" />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </CardContent>
         </div>

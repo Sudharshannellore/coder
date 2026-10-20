@@ -21,7 +21,7 @@ export default function Dashboard() {
   const lifetimeXp = useWalletStore((s) => s.lifetimeXp)
   const { data: quest } = useQuery({ queryKey: ['daily-quest'], queryFn: api.getDailyQuest })
   const { data: courses } = useQuery({ queryKey: ['courses'], queryFn: api.getCourses })
-  const { data: leaderboard } = useQuery({ queryKey: ['leaderboard'], queryFn: api.getLeaderboard })
+  const { data: leaderboard } = useQuery({ queryKey: ['leaderboard', 'global'], queryFn: () => api.getLeaderboard('global') })
 
   if (!user || !quest || !courses || !leaderboard) return <PageLoader />
 
@@ -155,9 +155,9 @@ export default function Dashboard() {
                 </span>
                 <Badge variant="success">Easy</Badge>
               </Link>
-              <Link to="/challenges/boss" className="flex items-center justify-between rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 text-sm hover:border-[var(--color-accent)]">
+              <Link to="/challenges" className="flex items-center justify-between rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 text-sm hover:border-[var(--color-accent)]">
                 <span className="flex items-center gap-2.5">
-                  <PixelSprite sprite="recursionBoss" scale={1} fps={3} /> The Recursion Boss
+                  <PixelSprite sprite="recursionBoss" scale={1} fps={3} /> This week's boss
                 </span>
                 <Badge variant="error">Boss</Badge>
               </Link>

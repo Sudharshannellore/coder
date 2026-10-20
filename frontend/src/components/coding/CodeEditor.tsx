@@ -20,8 +20,8 @@ const monacoLanguageMap: Record<Language, string> = {
   sql: 'sql',
 }
 
-const defineTheme: BeforeMount = (monaco) => {
-  monaco.editor.defineTheme('codequest-dark', {
+export const defineTheme: BeforeMount = (monaco) => {
+  monaco.editor.defineTheme('logicraft-dark', {
     base: 'vs-dark',
     inherit: true,
     rules: [
@@ -48,6 +48,8 @@ const defineTheme: BeforeMount = (monaco) => {
 
 interface CodeEditorProps {
   language: Language
+  /** Languages this problem offers; defaults to all. */
+  languages?: Language[]
   value: string
   onChange: (value: string) => void
   onLanguageChange: (language: Language) => void
@@ -59,7 +61,7 @@ interface CodeEditorProps {
   className?: string
 }
 
-export function CodeEditor({ language, value, onChange, onLanguageChange, onReset, onRun, onSubmit, className }: CodeEditorProps) {
+export function CodeEditor({ language, languages, value, onChange, onLanguageChange, onReset, onRun, onSubmit, className }: CodeEditorProps) {
   // Monaco commands are registered once on mount, so they call through refs to stay current.
   const runRef = useRef(onRun)
   const submitRef = useRef(onSubmit)
@@ -77,7 +79,7 @@ export function CodeEditor({ language, value, onChange, onLanguageChange, onRese
     <div className={cn('@container flex h-full flex-col overflow-hidden bg-[#0d0f14]', className)}>
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b-2 border-[var(--pixel-ink)] bg-[var(--color-surface)] px-2">
         <div className="flex items-center gap-1" role="tablist" aria-label="Language">
-          {languageOptions.map((option) => {
+          {languageOptions.filter((o) => !languages || languages.includes(o.value)).map((option) => {
             const isActive = language === option.value
             return (
               <button
@@ -112,7 +114,7 @@ export function CodeEditor({ language, value, onChange, onLanguageChange, onRese
       <div className="min-h-0 flex-1">
         <Editor
           height="100%"
-          theme="codequest-dark"
+          theme="logicraft-dark"
           beforeMount={defineTheme}
           onMount={handleMount}
           language={monacoLanguageMap[language]}

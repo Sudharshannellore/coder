@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { PixelSprite } from '@/components/pixel/PixelSprite'
 import { buttonVariants } from '@/components/ui/Button'
+import { useAuthStore } from '@/stores/authStore'
 import { cn } from '@/utils/cn'
 
 const burst = [
@@ -15,6 +16,7 @@ const burst = [
 
 export function TreasureCTA() {
   const [open, setOpen] = useState(false)
+  const signedIn = useAuthStore((s) => !!s.accessToken)
 
   return (
     <section
@@ -46,10 +48,10 @@ export function TreasureCTA() {
         Your first quest <span className="font-pixel text-[var(--color-accent)]">is waiting.</span>
       </h2>
       <p className="mx-auto mt-3 max-w-md text-[var(--color-text-secondary)]">
-        Open the chest: 100 bonus XP, a starter badge, and a seat on the leaderboard.
+        Open the chest: 200 starter XP, your first quest, and a seat on the leaderboard.
       </p>
-      <Link to="/dashboard" className={cn(buttonVariants({ variant: 'pixel', size: 'lg' }), 'mt-8 inline-flex text-lg')}>
-        Claim Starter Loot
+      <Link to={signedIn ? '/dashboard' : '/signup'} className={cn(buttonVariants({ variant: 'pixel', size: 'lg' }), 'mt-8 inline-flex text-lg')}>
+        {signedIn ? 'Back to your quest' : 'Claim Starter Loot'}
       </Link>
     </section>
   )
